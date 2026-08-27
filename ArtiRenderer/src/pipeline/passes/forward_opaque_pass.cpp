@@ -175,10 +175,22 @@ void ForwardOpaquePass::prepare(PassPrepareContext& context)
             throw std::runtime_error("NVRHI failed to create the forward graphics pipeline.");
         }
     }
+}
 
-    // 必须在 prepare 里登记：renderFrame 会先跑完所有 prepare 才跑 record。
-    context.blackboard().set(PassSlot::SceneColor, *m_impl->color_target);
-    context.blackboard().set(PassSlot::SceneDepth, *m_impl->depth_target);
+nvrhi::ITexture& ForwardOpaquePass::sceneColor() const
+{
+    if (!m_impl->color_target) {
+        throw std::logic_error("ForwardOpaquePass::sceneColor() before prepare().");
+    }
+    return *m_impl->color_target;
+}
+
+nvrhi::ITexture& ForwardOpaquePass::sceneDepth() const
+{
+    if (!m_impl->depth_target) {
+        throw std::logic_error("ForwardOpaquePass::sceneDepth() before prepare().");
+    }
+    return *m_impl->depth_target;
 }
 
 void ForwardOpaquePass::record(PassRecordContext& context)

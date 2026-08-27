@@ -17,7 +17,6 @@ public:
     size_t frameSlotCount() const noexcept;
 
     FrameContext& frame() const noexcept;
-    PassBlackboard& blackboard() const noexcept;
 
 private:
     arti::renderer::RenderPassPrepareContext* m_rhi{ nullptr };
@@ -37,7 +36,6 @@ public:
     size_t frameSlotIndex() const noexcept;
 
     FrameContext& frame() const noexcept;
-    const PassBlackboard& blackboard() const noexcept;
 
     nvrhi::IBuffer& vertexBuffer(MeshHandle mesh) const;
     nvrhi::IBuffer& indexBuffer(MeshHandle mesh) const;

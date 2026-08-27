@@ -34,8 +34,6 @@ size_t PassPrepareContext::frameSlotCount() const noexcept { return m_rhi->frame
 
 FrameContext& PassPrepareContext::frame() const noexcept { return *m_frame; }
 
-PassBlackboard& PassPrepareContext::blackboard() const noexcept { return m_frame->blackboard(); }
-
 PassRecordContext::PassRecordContext(arti::renderer::RenderPassContext& rhi,
         FrameContext& frame) noexcept
         : m_rhi(&rhi),
@@ -58,10 +56,6 @@ const nvrhi::FramebufferInfoEx& PassRecordContext::framebufferInfo() const noexc
 size_t PassRecordContext::frameSlotIndex() const noexcept { return m_rhi->frameSlotIndex(); }
 
 FrameContext& PassRecordContext::frame() const noexcept { return *m_frame; }
-
-const PassBlackboard& PassRecordContext::blackboard() const noexcept {
-    return m_frame->blackboard();
-}
 
 nvrhi::IBuffer& PassRecordContext::vertexBuffer(MeshHandle mesh) const {
     return m_rhi->buffer(requireMesh(*m_frame, mesh).vertex_buffer);

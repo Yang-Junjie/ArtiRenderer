@@ -10,6 +10,12 @@
 namespace arti::rendering {
 
 struct PresentPass::Impl {
+    explicit Impl(const ForwardOpaquePass& source) noexcept
+        : source(&source)
+    {}
+
+    const ForwardOpaquePass* source{ nullptr };
+
     arti::renderer::ShaderReflection reflection;
     nvrhi::ShaderHandle vertex_shader;
     nvrhi::ShaderHandle pixel_shader;
@@ -22,8 +28,8 @@ struct PresentPass::Impl {
     nvrhi::BindingSetHandle binding_set;
 };
 
-PresentPass::PresentPass()
-    : m_impl(std::make_unique<Impl>())
+PresentPass::PresentPass(const ForwardOpaquePass& source)
+    : m_impl(std::make_unique<Impl>(source))
 {}
 
 PresentPass::~PresentPass() = default;
@@ -53,8 +59,8 @@ void PresentPass::prepare(PassPrepareContext& context)
         }
     }
 
-    // 上游 pass 必须已经在它自己的 prepare 里登记过 SceneColor。
-    auto& source = context.blackboard().require(PassSlot::SceneColor);
+    // 上游 pass 的 prepare() 已经在这之前跑过，离屏纹理一定建好了。
+    auto& source = m_impl->source->sceneColor();
     if (m_impl->bound_source != &source || !m_impl->binding_set) {
         const std::array resources = {
             arti::renderer::vulkan::NvrhiBindingResource::Texture("scene_color", source),

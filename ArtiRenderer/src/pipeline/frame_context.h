@@ -1,5 +1,4 @@
 #pragma once
-#include "pass_blackboard.h"
 #include "render_output.h"
 #include "render_scene.h"
 #include "renderer.h"
@@ -21,9 +20,6 @@ public:
 
     RenderOutputInfo output() const noexcept { return m_output; }
 
-    PassBlackboard& blackboard() noexcept { return m_blackboard; }
-    const PassBlackboard& blackboard() const noexcept { return m_blackboard; }
-
     FrameStatistics& statistics() noexcept { return m_statistics; }
     const FrameStatistics& statistics() const noexcept { return m_statistics; }
 
@@ -31,7 +27,6 @@ private:
     const RenderScene* m_scene{ nullptr };
     const detail::ResourceRegistry* m_resources{ nullptr };
     RenderOutputInfo m_output;
-    PassBlackboard m_blackboard;
     FrameStatistics m_statistics;
 };
 

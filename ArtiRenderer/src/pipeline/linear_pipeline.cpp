@@ -56,8 +56,6 @@ void LinearPipeline::addPass(std::unique_ptr<LinearPass> pass)
 
 void LinearPipeline::render(FrameContext& frame)
 {
-    frame.blackboard().reset();
-
     m_submit_list.clear();
     m_submit_list.reserve(m_passes.size());
     for (size_t index = 0; index < m_passes.size(); ++index) {
@@ -80,8 +78,14 @@ void LinearPipeline::render(FrameContext& frame)
 std::unique_ptr<Pipeline> createForwardPipeline(arti::renderer::RenderDevice& device)
 {
     auto pipeline = std::make_unique<LinearPipeline>(device);
-    pipeline->addPass(std::make_unique<ForwardOpaquePass>());
-    pipeline->addPass(std::make_unique<PresentPass>());
+
+    // PresentPass 直接读 ForwardOpaquePass 的离屏纹理，所以顺序不能颠倒。
+    auto forward_opaque = std::make_unique<ForwardOpaquePass>();
+    auto present = std::make_unique<PresentPass>(*forward_opaque);
+
+    pipeline->addPass(std::move(forward_opaque));
+    pipeline->addPass(std::move(present));
+
     getLogChannel().info("Created forward pipeline (ForwardOpaque -> Present)");
     return pipeline;
 }
