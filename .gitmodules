@@ -1,0 +1,3 @@
+[submodule "ArtiChoco"]
+	path = ArtiChoco
+	url = https://github.com/Yang-Junjie/ArtiChoco.git
