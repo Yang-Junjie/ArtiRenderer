@@ -82,7 +82,7 @@ void PresentPass::prepare(PassPrepareContext& context)
                 .setRenderState(render_state)
                 .addBindingLayout(m_impl->binding_layout);
         m_impl->pipeline = device.createGraphicsPipeline(
-                pipeline_desc, context.backbuffer().getFramebufferInfo());
+                pipeline_desc, context.framebuffer().getFramebufferInfo());
         if (!m_impl->pipeline) {
             throw std::runtime_error("NVRHI failed to create the present graphics pipeline.");
         }
@@ -96,11 +96,11 @@ void PresentPass::record(PassRecordContext& context)
     }
 
     nvrhi::ViewportState viewport;
-    viewport.addViewportAndScissorRect(context.backbufferInfo().getViewport());
+    viewport.addViewportAndScissorRect(context.framebufferInfo().getViewport());
 
     nvrhi::GraphicsState state;
     state.setPipeline(m_impl->pipeline)
-            .setFramebuffer(&context.backbuffer())
+            .setFramebuffer(&context.framebuffer())
             .setViewport(viewport)
             .addBindingSet(m_impl->binding_set);
 

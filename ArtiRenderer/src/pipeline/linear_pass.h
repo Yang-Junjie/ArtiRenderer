@@ -12,8 +12,8 @@ public:
     PassPrepareContext(arti::renderer::RenderPassPrepareContext& rhi, FrameContext& frame) noexcept;
 
     nvrhi::IDevice& device() const noexcept;
-    nvrhi::IFramebuffer& framebffer() const noexcept;
-    const nvrhi::FramebufferInfoEx& framebfferInfo() const noexcept;
+    nvrhi::IFramebuffer& framebuffer() const noexcept;
+    const nvrhi::FramebufferInfoEx& framebufferInfo() const noexcept;
     size_t frameSlotCount() const noexcept;
 
     FrameContext& frame() const noexcept;
@@ -31,9 +31,9 @@ public:
 
     nvrhi::IDevice& device() const noexcept;
     nvrhi::ICommandList& commands() const noexcept;
-    nvrhi::IFramebuffer& framebffer() const noexcept;
-    nvrhi::ITexture& framebfferColor() const noexcept;
-    const nvrhi::FramebufferInfoEx& framebfferInfo() const noexcept;
+    nvrhi::IFramebuffer& framebuffer() const noexcept;
+    nvrhi::ITexture& framebufferColor() const noexcept;
+    const nvrhi::FramebufferInfoEx& framebufferInfo() const noexcept;
     size_t frameSlotIndex() const noexcept;
 
     FrameContext& frame() const noexcept;

@@ -109,7 +109,7 @@ void ForwardOpaquePass::prepare(PassPrepareContext& context)
         }
     }
 
-    const auto& backbuffer_info = context.backbufferInfo();
+    const auto& backbuffer_info = context.framebufferInfo();
     const bool size_changed = !m_impl->framebuffer || m_impl->width != backbuffer_info.width ||
                               m_impl->height != backbuffer_info.height;
     if (size_changed) {

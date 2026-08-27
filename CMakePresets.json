@@ -22,7 +22,7 @@
     {
       "name": "debug",
       "displayName": "Debug (Ninja + clang)",
-      "description": "默认开发配置，compile_commands.json 落在 build/ 供 clangd 使用",
+      "description": "默认开发配置, compile_commands.json 落在 build/ 供 clangd 使用",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"

@@ -22,11 +22,11 @@ PassPrepareContext::PassPrepareContext(arti::renderer::RenderPassPrepareContext&
 
 nvrhi::IDevice& PassPrepareContext::device() const noexcept { return m_rhi->device(); }
 
-nvrhi::IFramebuffer& PassPrepareContext::framebffer() const noexcept {
+nvrhi::IFramebuffer& PassPrepareContext::framebuffer() const noexcept {
     return m_rhi->framebuffer();
 }
 
-const nvrhi::FramebufferInfoEx& PassPrepareContext::framebfferInfo() const noexcept {
+const nvrhi::FramebufferInfoEx& PassPrepareContext::framebufferInfo() const noexcept {
     return m_rhi->framebufferInfo();
 }
 
@@ -45,13 +45,13 @@ nvrhi::IDevice& PassRecordContext::device() const noexcept { return m_rhi->devic
 
 nvrhi::ICommandList& PassRecordContext::commands() const noexcept { return m_rhi->commands(); }
 
-nvrhi::IFramebuffer& PassRecordContext::framebffer() const noexcept { return m_rhi->framebuffer(); }
+nvrhi::IFramebuffer& PassRecordContext::framebuffer() const noexcept { return m_rhi->framebuffer(); }
 
-nvrhi::ITexture& PassRecordContext::framebfferColor() const noexcept {
+nvrhi::ITexture& PassRecordContext::framebufferColor() const noexcept {
     return m_rhi->colorTexture();
 }
 
-const nvrhi::FramebufferInfoEx& PassRecordContext::framebfferInfo() const noexcept {
+const nvrhi::FramebufferInfoEx& PassRecordContext::framebufferInfo() const noexcept {
     return m_rhi->framebufferInfo();
 }
 
