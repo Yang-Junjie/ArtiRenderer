@@ -8,6 +8,7 @@ add_library(artirenderer STATIC
     src/pipeline/frame_context.cpp
     src/pipeline/linear_pass.cpp
     src/pipeline/linear_pipeline.cpp
+    src/pipeline/render_target_set.cpp
     src/pipeline/passes/forward_opaque_pass.cpp
     src/pipeline/passes/present_pass.cpp
 )

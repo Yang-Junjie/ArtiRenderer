@@ -5,88 +5,88 @@
 #include "passes/forward_opaque_pass.h"
 #include "passes/present_pass.h"
 
+#include <array>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace arti::rendering {
 
-// FrameContext 每帧由 Renderer 重新构造，所以 adapter 每帧被 bind 一次。
-class LinearPipeline::PassAdapter final : public arti::renderer::RenderPass {
-public:
-    explicit PassAdapter(LinearPass& pass) noexcept
-        : m_pass(&pass)
-    {}
-
-    void bind(FrameContext& frame) noexcept
-    {
-        m_frame = &frame;
-    }
-
-    void prepare(arti::renderer::RenderPassPrepareContext& context) override
-    {
-        PassPrepareContext wrapped{ context, *m_frame };
-        m_pass->prepare(wrapped);
-    }
-
-    void record(arti::renderer::RenderPassContext& context) override
-    {
-        PassRecordContext wrapped{ context, *m_frame };
-        m_pass->record(wrapped);
-    }
-
-private:
-    LinearPass* m_pass{ nullptr };
-    FrameContext* m_frame{ nullptr };
-};
-
 LinearPipeline::LinearPipeline(arti::renderer::RenderDevice& device)
-    : m_device(&device)
-{}
+        : m_device(&device) {}
 
 LinearPipeline::~LinearPipeline() = default;
 
-void LinearPipeline::addPass(std::unique_ptr<LinearPass> pass)
-{
+void LinearPipeline::addPass(LinearStage stage, std::unique_ptr<LinearPass> pass) {
     if (!pass) {
         throw std::invalid_argument("A linear pipeline pass must not be null.");
     }
-    m_adapters.push_back(std::make_unique<PassAdapter>(*pass));
-    m_passes.push_back(std::move(pass));
+    // 只校验、不排序。装错位置在这里就抛，而不是等画面不对再查。
+    if (!m_passes.empty() && stage < m_passes.back().stage) {
+        throw std::invalid_argument("Linear pipeline stages must be installed in order.");
+    }
+
+    Entry entry;
+    entry.marker_label =
+            std::string{ linearStageName(stage) } + " / " + std::string{ pass->name() };
+    entry.stage = stage;
+    entry.pass = std::move(pass);
+    m_passes.push_back(std::move(entry));
 }
 
-void LinearPipeline::render(FrameContext& frame)
-{
-    m_submit_list.clear();
-    m_submit_list.reserve(m_passes.size());
-    for (size_t index = 0; index < m_passes.size(); ++index) {
-        if (!m_passes[index]->isEnabled(frame)) {
+void LinearPipeline::render(FrameContext& frame) {
+    m_frame = &frame;
+
+    // 整条链只提交一个 RenderPass，所以 renderFrame 的「空列表要抛」这个边界不存在了。
+    std::array<arti::renderer::RenderPass*, 1> submit{ this };
+    const auto result = m_device->renderFrame(submit);
+    frame.statistics().rendered = result.wasRendered();
+
+    m_frame = nullptr;
+}
+
+void LinearPipeline::prepare(arti::renderer::RenderPassPrepareContext& context) {
+    if (m_frame == nullptr) {
+        throw std::logic_error("LinearPipeline::prepare() outside render().");
+    }
+
+    // 在所有 pass 的 prepare() 之前，所以 pass 拿到的目标一定是建好的。
+    m_targets.prepare(context.device(), context.framebuffer());
+
+    for (const auto& entry: m_passes) {
+        if (!entry.pass->isEnabled(*m_frame)) {
             continue;
         }
-        m_adapters[index]->bind(frame);
-        m_submit_list.push_back(m_adapters[index].get());
+        PassPrepareContext pass_context{ context, *m_frame, m_targets };
+        entry.pass->prepare(pass_context);
     }
-
-    // RenderDevice::renderFrame 对空 pass 列表会抛，这里提前退出。
-    if (m_submit_list.empty()) {
-        return;
-    }
-
-    const auto result = m_device->renderFrame(m_submit_list);
-    frame.statistics().rendered = result.wasRendered();
 }
 
-std::unique_ptr<Pipeline> createForwardPipeline(arti::renderer::RenderDevice& device)
-{
+void LinearPipeline::record(arti::renderer::RenderPassContext& context) {
+    if (m_frame == nullptr) {
+        throw std::logic_error("LinearPipeline::record() outside render().");
+    }
+
+    auto& commands = context.commands();
+    for (const auto& entry: m_passes) {
+        if (!entry.pass->isEnabled(*m_frame)) {
+            continue;
+        }
+        commands.beginMarker(entry.marker_label.c_str());
+        PassRecordContext pass_context{ context, *m_frame, m_targets };
+        entry.pass->record(pass_context);
+        commands.endMarker();
+    }
+}
+
+std::unique_ptr<Pipeline> createForwardPipeline(arti::renderer::RenderDevice& device) {
     auto pipeline = std::make_unique<LinearPipeline>(device);
 
-    // PresentPass 直接读 ForwardOpaquePass 的离屏纹理，所以顺序不能颠倒。
-    auto forward_opaque = std::make_unique<ForwardOpaquePass>();
-    auto present = std::make_unique<PresentPass>(*forward_opaque);
+    // 两个 pass 之间不再互相认识：SceneColor 通过 RenderTargetSet 交接，顺序由 stage 表达。
+    pipeline->addPass(LinearStage::Opaque, std::make_unique<ForwardOpaquePass>());
+    pipeline->addPass(LinearStage::Output, std::make_unique<PresentPass>());
 
-    pipeline->addPass(std::move(forward_opaque));
-    pipeline->addPass(std::move(present));
-
-    getLogChannel().info("Created forward pipeline (ForwardOpaque -> Present)");
+    getLogChannel().info("Created forward pipeline (Opaque -> Output)");
     return pipeline;
 }
 

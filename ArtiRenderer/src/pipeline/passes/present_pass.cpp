@@ -5,38 +5,37 @@
 #include "shader_paths.h"
 
 #include <array>
+#include <limits>
 #include <stdexcept>
 
 namespace arti::rendering {
 
 struct PresentPass::Impl {
-    explicit Impl(const ForwardOpaquePass& source) noexcept
-        : source(&source)
-    {}
-
-    const ForwardOpaquePass* source{ nullptr };
-
     arti::renderer::ShaderReflection reflection;
     nvrhi::ShaderHandle vertex_shader;
     nvrhi::ShaderHandle pixel_shader;
     nvrhi::BindingLayoutHandle binding_layout;
     nvrhi::SamplerHandle sampler;
-    nvrhi::GraphicsPipelineHandle pipeline;
 
-    // 只在源纹理换了（离屏目标重建）时才重建 binding set。
-    nvrhi::ITexture* bound_source{ nullptr };
+    nvrhi::GraphicsPipelineHandle pipeline;
+    // PSO 只依赖格式和采样数，尺寸变了不用重建。
+    nvrhi::FramebufferInfo pipeline_framebuffer_info;
+
+    // 只在 RenderTargetSet 重建过（离屏纹理换了）时才重建 binding set。用 revision 而不是自己
+    // 存纹理指针再比对 —— 目标集自己就告诉你它变了。
+    uint64_t bound_revision{ std::numeric_limits<uint64_t>::max() };
     nvrhi::BindingSetHandle binding_set;
 };
 
-PresentPass::PresentPass(const ForwardOpaquePass& source)
-    : m_impl(std::make_unique<Impl>(source))
-{}
+PresentPass::PresentPass()
+        : m_impl(std::make_unique<Impl>()) {}
 
 PresentPass::~PresentPass() = default;
 
 void PresentPass::prepare(PassPrepareContext& context)
 {
     auto& device = context.device();
+    auto& targets = context.targets();
 
     if (!m_impl->binding_layout) {
         const auto program = arti::renderer::SlangCompiler::compileGraphics(
@@ -59,23 +58,26 @@ void PresentPass::prepare(PassPrepareContext& context)
         }
     }
 
-    // 上游 pass 的 prepare() 已经在这之前跑过，离屏纹理一定建好了。
-    auto& source = m_impl->source->sceneColor();
-    if (m_impl->bound_source != &source || !m_impl->binding_set) {
+    // 管线在所有 pass 的 prepare() 之前建好了目标，所以这里读得到。
+    if (m_impl->bound_revision != targets.revision() || !m_impl->binding_set) {
         const std::array resources = {
-            arti::renderer::vulkan::NvrhiBindingResource::Texture("scene_color", source),
-            arti::renderer::vulkan::NvrhiBindingResource::Sampler("scene_sampler",
-                    *m_impl->sampler),
+            arti::renderer::vulkan::NvrhiBindingResource::Texture(
+                    "scene_color", targets.sceneColor()),
+            arti::renderer::vulkan::NvrhiBindingResource::Sampler(
+                    "scene_sampler", *m_impl->sampler),
         };
         m_impl->binding_set = arti::renderer::vulkan::createNvrhiBindingSet(
                 device, m_impl->reflection, 0, *m_impl->binding_layout, resources);
         if (!m_impl->binding_set) {
             throw std::runtime_error("NVRHI failed to create the present binding set.");
         }
-        m_impl->bound_source = &source;
+        m_impl->bound_revision = targets.revision();
     }
 
-    if (!m_impl->pipeline) {
+    const auto& framebuffer_info = targets.outputFramebuffer().getFramebufferInfo();
+    if (!m_impl->pipeline ||
+            m_impl->pipeline_framebuffer_info !=
+                    static_cast<const nvrhi::FramebufferInfo&>(framebuffer_info)) {
         nvrhi::DepthStencilState depth_state;
         depth_state.disableDepthTest().disableDepthWrite().disableStencil();
         nvrhi::RenderState render_state;
@@ -87,11 +89,12 @@ void PresentPass::prepare(PassPrepareContext& context)
                 .setPixelShader(m_impl->pixel_shader)
                 .setRenderState(render_state)
                 .addBindingLayout(m_impl->binding_layout);
-        m_impl->pipeline = device.createGraphicsPipeline(
-                pipeline_desc, context.framebuffer().getFramebufferInfo());
+        // 用 FramebufferInfo 那个重载：吃 IFramebuffer* 的已经标了 [[deprecated]]。
+        m_impl->pipeline = device.createGraphicsPipeline(pipeline_desc, framebuffer_info);
         if (!m_impl->pipeline) {
             throw std::runtime_error("NVRHI failed to create the present graphics pipeline.");
         }
+        m_impl->pipeline_framebuffer_info = framebuffer_info;
     }
 }
 
@@ -101,12 +104,13 @@ void PresentPass::record(PassRecordContext& context)
         throw std::logic_error("PresentPass was not prepared.");
     }
 
+    auto& framebuffer = context.targets().outputFramebuffer();
     nvrhi::ViewportState viewport;
-    viewport.addViewportAndScissorRect(context.framebufferInfo().getViewport());
+    viewport.addViewportAndScissorRect(framebuffer.getFramebufferInfo().getViewport());
 
     nvrhi::GraphicsState state;
     state.setPipeline(m_impl->pipeline)
-            .setFramebuffer(&context.framebuffer())
+            .setFramebuffer(&framebuffer)
             .setViewport(viewport)
             .addBindingSet(m_impl->binding_set);
 

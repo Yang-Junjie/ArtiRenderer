@@ -16,46 +16,30 @@ const detail::GPUMesh& requireMesh(const FrameContext& frame, MeshHandle handle)
 } // namespace
 
 PassPrepareContext::PassPrepareContext(arti::renderer::RenderPassPrepareContext& rhi,
-        FrameContext& frame) noexcept
+        FrameContext& frame, RenderTargetSet& targets) noexcept
         : m_rhi(&rhi),
-          m_frame(&frame) {}
+          m_frame(&frame),
+          m_targets(&targets) {}
 
 nvrhi::IDevice& PassPrepareContext::device() const noexcept { return m_rhi->device(); }
 
-nvrhi::IFramebuffer& PassPrepareContext::framebuffer() const noexcept {
-    return m_rhi->framebuffer();
-}
-
-const nvrhi::FramebufferInfoEx& PassPrepareContext::framebufferInfo() const noexcept {
-    return m_rhi->framebufferInfo();
-}
-
-size_t PassPrepareContext::frameSlotCount() const noexcept { return m_rhi->frameSlotCount(); }
-
 FrameContext& PassPrepareContext::frame() const noexcept { return *m_frame; }
 
-PassRecordContext::PassRecordContext(arti::renderer::RenderPassContext& rhi,
-        FrameContext& frame) noexcept
+RenderTargetSet& PassPrepareContext::targets() const noexcept { return *m_targets; }
+
+PassRecordContext::PassRecordContext(arti::renderer::RenderPassContext& rhi, FrameContext& frame,
+        RenderTargetSet& targets) noexcept
         : m_rhi(&rhi),
-          m_frame(&frame) {}
+          m_frame(&frame),
+          m_targets(&targets) {}
 
 nvrhi::IDevice& PassRecordContext::device() const noexcept { return m_rhi->device(); }
 
 nvrhi::ICommandList& PassRecordContext::commands() const noexcept { return m_rhi->commands(); }
 
-nvrhi::IFramebuffer& PassRecordContext::framebuffer() const noexcept { return m_rhi->framebuffer(); }
-
-nvrhi::ITexture& PassRecordContext::framebufferColor() const noexcept {
-    return m_rhi->colorTexture();
-}
-
-const nvrhi::FramebufferInfoEx& PassRecordContext::framebufferInfo() const noexcept {
-    return m_rhi->framebufferInfo();
-}
-
-size_t PassRecordContext::frameSlotIndex() const noexcept { return m_rhi->frameSlotIndex(); }
-
 FrameContext& PassRecordContext::frame() const noexcept { return *m_frame; }
+
+RenderTargetSet& PassRecordContext::targets() const noexcept { return *m_targets; }
 
 nvrhi::IBuffer& PassRecordContext::vertexBuffer(MeshHandle mesh) const {
     return m_rhi->buffer(requireMesh(*m_frame, mesh).vertex_buffer);

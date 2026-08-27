@@ -26,9 +26,6 @@ struct ForwardDrawConstants {
 static_assert(std::is_standard_layout_v<ForwardDrawConstants>);
 static_assert(sizeof(ForwardDrawConstants) == sizeof(float) * 20);
 
-constexpr auto sceneColorFormat = nvrhi::Format::RGBA8_UNORM;
-constexpr auto sceneDepthFormat = nvrhi::Format::D32;
-
 } // namespace
 
 struct ForwardOpaquePass::Impl {
@@ -38,13 +35,11 @@ struct ForwardOpaquePass::Impl {
     nvrhi::BindingLayoutHandle binding_layout;
     nvrhi::InputLayoutHandle input_layout;
     nvrhi::SamplerHandle sampler;
-    nvrhi::GraphicsPipelineHandle pipeline;
 
-    nvrhi::TextureHandle color_target;
-    nvrhi::TextureHandle depth_target;
-    nvrhi::FramebufferHandle framebuffer;
-    uint32_t width{ 0 };
-    uint32_t height{ 0 };
+    nvrhi::GraphicsPipelineHandle pipeline;
+    // PSO 只依赖 attachment 的格式和采样数，不依赖尺寸（FramebufferInfo 里没有宽高，而且带
+    // operator==），所以窗口缩放不需要重建。
+    nvrhi::FramebufferInfo pipeline_framebuffer_info;
 
     // TextureHandle -> binding set。binding set 只依赖 binding layout 和纹理，
     // 所以可以跨帧缓存，重建离屏目标时不用清。
@@ -109,49 +104,11 @@ void ForwardOpaquePass::prepare(PassPrepareContext& context)
         }
     }
 
-    const auto& backbuffer_info = context.framebufferInfo();
-    const bool size_changed = !m_impl->framebuffer || m_impl->width != backbuffer_info.width ||
-                              m_impl->height != backbuffer_info.height;
-    if (size_changed) {
-        m_impl->width = backbuffer_info.width;
-        m_impl->height = backbuffer_info.height;
-
-        nvrhi::TextureDesc color_desc;
-        color_desc.setWidth(m_impl->width)
-                .setHeight(m_impl->height)
-                .setFormat(sceneColorFormat)
-                .setIsRenderTarget(true)
-                .setDebugName("ArtiRenderer SceneColor")
-                .enableAutomaticStateTracking(nvrhi::ResourceStates::ShaderResource);
-
-        nvrhi::TextureDesc depth_desc;
-        depth_desc.setWidth(m_impl->width)
-                .setHeight(m_impl->height)
-                .setFormat(sceneDepthFormat)
-                .setIsRenderTarget(true)
-                .setDebugName("ArtiRenderer SceneDepth")
-                .enableAutomaticStateTracking(nvrhi::ResourceStates::DepthWrite);
-
-        m_impl->color_target = device.createTexture(color_desc);
-        m_impl->depth_target = device.createTexture(depth_desc);
-        if (!m_impl->color_target || !m_impl->depth_target) {
-            throw std::runtime_error("NVRHI failed to create the forward render targets.");
-        }
-
-        nvrhi::FramebufferDesc framebuffer_desc;
-        framebuffer_desc.addColorAttachment(m_impl->color_target)
-                .setDepthAttachment(m_impl->depth_target);
-        m_impl->framebuffer = device.createFramebuffer(framebuffer_desc);
-        if (!m_impl->framebuffer) {
-            throw std::runtime_error("NVRHI failed to create the forward framebuffer.");
-        }
-
-        // framebuffer 格式没变，但尺寸变了也重建 PSO 最省心。
-        m_impl->pipeline = nullptr;
-        getLogChannel().debug("Forward targets resized to {}x{}", m_impl->width, m_impl->height);
-    }
-
-    if (!m_impl->pipeline) {
+    // 离屏目标由 RenderTargetSet 建好了，这里只读它的 framebuffer info 来建 PSO。
+    const auto& framebuffer_info = context.targets().sceneFramebuffer().getFramebufferInfo();
+    if (!m_impl->pipeline ||
+            m_impl->pipeline_framebuffer_info !=
+                    static_cast<const nvrhi::FramebufferInfo&>(framebuffer_info)) {
         nvrhi::DepthStencilState depth_state;
         depth_state.enableDepthTest().enableDepthWrite().disableStencil();
         nvrhi::RasterState raster_state;
@@ -169,28 +126,14 @@ void ForwardOpaquePass::prepare(PassPrepareContext& context)
                 .setPixelShader(m_impl->pixel_shader)
                 .setRenderState(render_state)
                 .addBindingLayout(m_impl->binding_layout);
-        m_impl->pipeline = device.createGraphicsPipeline(
-                pipeline_desc, m_impl->framebuffer->getFramebufferInfo());
+        // 用 FramebufferInfo 那个重载：吃 IFramebuffer* 的已经标了 [[deprecated]]。
+        m_impl->pipeline = device.createGraphicsPipeline(pipeline_desc, framebuffer_info);
         if (!m_impl->pipeline) {
             throw std::runtime_error("NVRHI failed to create the forward graphics pipeline.");
         }
+        m_impl->pipeline_framebuffer_info = framebuffer_info;
+        getLogChannel().debug("Created the forward graphics pipeline");
     }
-}
-
-nvrhi::ITexture& ForwardOpaquePass::sceneColor() const
-{
-    if (!m_impl->color_target) {
-        throw std::logic_error("ForwardOpaquePass::sceneColor() before prepare().");
-    }
-    return *m_impl->color_target;
-}
-
-nvrhi::ITexture& ForwardOpaquePass::sceneDepth() const
-{
-    if (!m_impl->depth_target) {
-        throw std::logic_error("ForwardOpaquePass::sceneDepth() before prepare().");
-    }
-    return *m_impl->depth_target;
 }
 
 void ForwardOpaquePass::record(PassRecordContext& context)
@@ -198,16 +141,17 @@ void ForwardOpaquePass::record(PassRecordContext& context)
     auto& frame = context.frame();
     const auto& scene = frame.scene();
     auto& commands = context.commands();
+    auto& targets = context.targets();
 
     const auto& clear = scene.clear_color;
-    commands.clearTextureFloat(m_impl->color_target, nvrhi::AllSubresources,
+    commands.clearTextureFloat(&targets.sceneColor(), nvrhi::AllSubresources,
             nvrhi::Color{ clear.r, clear.g, clear.b, clear.a });
     commands.clearDepthStencilTexture(
-            m_impl->depth_target, nvrhi::AllSubresources, true, 1.0f, false, 0);
+            &targets.sceneDepth(), nvrhi::AllSubresources, true, 1.0f, false, 0);
 
-    const auto& framebuffer_info = m_impl->framebuffer->getFramebufferInfo();
+    auto& framebuffer = targets.sceneFramebuffer();
     nvrhi::ViewportState viewport;
-    viewport.addViewportAndScissorRect(framebuffer_info.getViewport());
+    viewport.addViewportAndScissorRect(framebuffer.getFramebufferInfo().getViewport());
 
     const glm::mat4 view_projection = scene.view.projection * scene.view.view;
 
@@ -241,7 +185,7 @@ void ForwardOpaquePass::record(PassRecordContext& context)
 
         nvrhi::GraphicsState state;
         state.setPipeline(m_impl->pipeline)
-                .setFramebuffer(m_impl->framebuffer)
+                .setFramebuffer(&framebuffer)
                 .setViewport(viewport)
                 .addBindingSet(&m_impl->bindingSetFor(context, material.base_color_texture))
                 .addVertexBuffer(nvrhi::VertexBufferBinding()
