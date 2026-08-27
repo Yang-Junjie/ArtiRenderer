@@ -9,8 +9,12 @@ add_library(artirenderer STATIC
     src/pipeline/linear_pass.cpp
     src/pipeline/linear_pipeline.cpp
     src/pipeline/render_target_set.cpp
-    src/pipeline/passes/forward_opaque_pass.cpp
+    src/pipeline/passes/blinn_phong_opaque_pass.cpp
+    src/pipeline/passes/clear_scene_pass.cpp
+    src/pipeline/passes/draw_resolve.cpp
+    src/pipeline/passes/imgui_pass.cpp
     src/pipeline/passes/present_pass.cpp
+    src/pipeline/passes/unlit_opaque_pass.cpp
 )
 add_library(ArtiRenderer::Renderer ALIAS artirenderer)
 
@@ -40,21 +44,19 @@ target_link_libraries(artirenderer
         ArtiSDK::GLM
     PRIVATE
         ArtiSDK::Slang
+        # 只要 imgui 核心：画 ImDrawData 不需要知道窗口系统，SDL3 后端留给宿主链。
+        ImGui::Core
         nvrhi_vk
 )
 
 set_target_properties(artirenderer PROPERTIES FOLDER "ArtiRenderer")
 
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/shaders/forward_unlit.slang
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/shaders/present.slang
-)
-target_sources(artirenderer PRIVATE
+set(ARTIRENDERER_SHADERS
     src/shaders/forward_unlit.slang
+    src/shaders/forward_blinn_phong.slang
+    src/shaders/imgui.slang
     src/shaders/present.slang
 )
-set_source_files_properties(
-    src/shaders/forward_unlit.slang
-    src/shaders/present.slang
-    PROPERTIES HEADER_FILE_ONLY TRUE
-)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${ARTIRENDERER_SHADERS})
+target_sources(artirenderer PRIVATE ${ARTIRENDERER_SHADERS})
+set_source_files_properties(${ARTIRENDERER_SHADERS} PROPERTIES HEADER_FILE_ONLY TRUE)

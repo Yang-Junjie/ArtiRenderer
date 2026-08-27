@@ -26,6 +26,7 @@ foreach(_arti_required_submodule
     "${ARTIRENDERER_ARTICHOCO_DIR}/third_party/yaml-cpp/CMakeLists.txt"
     "${ARTIRENDERER_ARTICHOCO_DIR}/third_party/enkiTS/CMakeLists.txt"
     "${ARTIRENDERER_ARTICHOCO_DIR}/third_party/entt/src/entt/entt.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/imgui.cpp"
 )
     if(NOT EXISTS "${_arti_required_submodule}")
         message(FATAL_ERROR
@@ -42,6 +43,8 @@ list(APPEND CMAKE_MODULE_PATH "${ARTIRENDERER_ARTICHOCO_DIR}/cmake")
 include(ArtiVulkanSDK)
 
 add_subdirectory(ArtiChoco)
+# third_party 在 ArtiRenderer 之前：imgui_sdl3 要用 ArtiChoco 的 cmake 模块提供的 ArtiSDK::SDL3。
+add_subdirectory(third_party)
 add_subdirectory(ArtiRenderer)
 
 if(ARTIRENDERER_BUILD_SAMPLES)

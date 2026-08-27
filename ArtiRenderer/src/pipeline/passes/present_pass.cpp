@@ -32,6 +32,11 @@ PresentPass::PresentPass()
 
 PresentPass::~PresentPass() = default;
 
+bool PresentPass::isEnabled(const FrameContext& frame) const
+{
+    return frame.settings().present == PresentMode::Direct;
+}
+
 void PresentPass::prepare(PassPrepareContext& context)
 {
     auto& device = context.device();

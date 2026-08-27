@@ -4,6 +4,7 @@
 #include "light.h"
 #include "material.h"
 #include "mesh.h"
+#include "frame_overlay.h"
 #include "render_output.h"
 #include "render_scene.h"
 #include "renderer.h"

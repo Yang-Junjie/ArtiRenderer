@@ -24,12 +24,15 @@ public:
     RenderTargetSet(const RenderTargetSet&) = delete;
     RenderTargetSet& operator=(const RenderTargetSet&) = delete;
 
-    // 每帧在所有 pass 的 prepare() 之前调用：绑定本帧 backbuffer，并按它的尺寸建离屏目标
-    // （尺寸没变就复用）。
+    // 每帧在所有 pass 的 prepare() 之前调用：绑定本帧 backbuffer，并建离屏目标（尺寸没变就复用）。
     //
     // backbuffer 在 prepare 阶段就绑好而不是留到 record，是因为 pass 的 prepare() 要用
     // outputFramebuffer() 的 framebuffer info 去建 PSO —— 留到 record 绑的话第一帧就会抛。
-    void prepare(nvrhi::IDevice& device, nvrhi::IFramebuffer& output_framebuffer);
+    //
+    // requested_width/height 为 0 时离屏目标跟着 backbuffer 的尺寸走。编辑器模式下宿主会传
+    // 面板的像素尺寸，这样场景就是按面板分辨率渲染的，而不是渲染成窗口大小再缩放。
+    void prepare(nvrhi::IDevice& device, nvrhi::IFramebuffer& output_framebuffer,
+            uint32_t requested_width = 0, uint32_t requested_height = 0);
 
     bool isReady() const noexcept { return bool(m_scene_framebuffer); }
 

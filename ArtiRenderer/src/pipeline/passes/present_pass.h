@@ -17,6 +17,9 @@ public:
 
     std::string_view name() const noexcept override { return "Present"; }
 
+    // IntoUI 模式下关掉：场景不贴到 backbuffer，而是留在 SceneColor 里等 ImGui 采样。
+    bool isEnabled(const FrameContext& frame) const override;
+
     void prepare(PassPrepareContext& context) override;
     void record(PassRecordContext& context) override;
 

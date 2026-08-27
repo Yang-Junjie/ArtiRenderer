@@ -2,8 +2,11 @@
 
 #include "artichoco/renderer/render_device.h"
 #include "log.h"
-#include "passes/forward_opaque_pass.h"
+#include "passes/blinn_phong_opaque_pass.h"
+#include "passes/clear_scene_pass.h"
+#include "passes/imgui_pass.h"
 #include "passes/present_pass.h"
+#include "passes/unlit_opaque_pass.h"
 
 #include <array>
 #include <stdexcept>
@@ -51,7 +54,9 @@ void LinearPipeline::prepare(arti::renderer::RenderPassPrepareContext& context) 
     }
 
     // 在所有 pass 的 prepare() 之前，所以 pass 拿到的目标一定是建好的。
-    m_targets.prepare(context.device(), context.framebuffer());
+    const auto& settings = m_frame->settings();
+    m_targets.prepare(context.device(), context.framebuffer(), settings.scene_target_width,
+            settings.scene_target_height);
 
     for (const auto& entry: m_passes) {
         if (!entry.pass->isEnabled(*m_frame)) {
@@ -82,11 +87,19 @@ void LinearPipeline::record(arti::renderer::RenderPassContext& context) {
 std::unique_ptr<Pipeline> createForwardPipeline(arti::renderer::RenderDevice& device) {
     auto pipeline = std::make_unique<LinearPipeline>(device);
 
-    // 两个 pass 之间不再互相认识：SceneColor 通过 RenderTargetSet 交接，顺序由 stage 表达。
-    pipeline->addPass(LinearStage::Opaque, std::make_unique<ForwardOpaquePass>());
+    // pass 之间不互相认识：SceneColor 通过 RenderTargetSet 交接，顺序由 stage 表达。
+    //
+    // 清屏独立成 pass，所以两个 opaque pass 谁先谁后都不影响正确性（深度测试兜住遮挡）。
+    // 每种材质一个 pass、一个 PSO —— 材质类型由 PSO 表达，着色器里不再有分支开关。
+    pipeline->addPass(LinearStage::Clear, std::make_unique<ClearScenePass>());
+    pipeline->addPass(LinearStage::Opaque, std::make_unique<UnlitOpaquePass>());
+    pipeline->addPass(LinearStage::Opaque, std::make_unique<BlinnPhongOpaquePass>());
     pipeline->addPass(LinearStage::Output, std::make_unique<PresentPass>());
+    // 常驻安装，但没有 draw data 的帧里 isEnabled() 是 false —— 不用 UI 的运行时不付代价，
+    // 也不用为了开关 UI 去换一条管线。
+    pipeline->addPass(LinearStage::UI, std::make_unique<ImGuiPass>());
 
-    getLogChannel().info("Created forward pipeline (Opaque -> Output)");
+    getLogChannel().info("Created forward pipeline (Clear -> Opaque x2 -> Output -> UI)");
     return pipeline;
 }
 

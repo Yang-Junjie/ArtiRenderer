@@ -23,6 +23,8 @@ PassPrepareContext::PassPrepareContext(arti::renderer::RenderPassPrepareContext&
 
 nvrhi::IDevice& PassPrepareContext::device() const noexcept { return m_rhi->device(); }
 
+size_t PassPrepareContext::frameSlotCount() const noexcept { return m_rhi->frameSlotCount(); }
+
 FrameContext& PassPrepareContext::frame() const noexcept { return *m_frame; }
 
 RenderTargetSet& PassPrepareContext::targets() const noexcept { return *m_targets; }
@@ -36,6 +38,10 @@ PassRecordContext::PassRecordContext(arti::renderer::RenderPassContext& rhi, Fra
 nvrhi::IDevice& PassRecordContext::device() const noexcept { return m_rhi->device(); }
 
 nvrhi::ICommandList& PassRecordContext::commands() const noexcept { return m_rhi->commands(); }
+
+size_t PassRecordContext::frameSlotIndex() const noexcept { return m_rhi->frameSlotIndex(); }
+
+nvrhi::ITexture& PassRecordContext::outputColor() const noexcept { return m_rhi->colorTexture(); }
 
 FrameContext& PassRecordContext::frame() const noexcept { return *m_frame; }
 

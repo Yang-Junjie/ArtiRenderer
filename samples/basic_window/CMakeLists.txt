@@ -7,6 +7,7 @@ target_include_directories(basic_window PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(basic_window
     PRIVATE
         ArtiRenderer::Renderer
+        ArtiRenderer::SampleCommon
         ArtiChoco::Platform
         ArtiSDK::GLM
 )

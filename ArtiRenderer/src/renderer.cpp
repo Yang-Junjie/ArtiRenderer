@@ -29,11 +29,17 @@ struct Renderer::Impl {
     Impl(arti::renderer::RenderDevice& device, const RendererCreateInfo& info)
             : device(&device),
               resources(device),
-              pipeline(createPipeline(info.pipeline, device)) {}
+              pipeline(createPipeline(info.pipeline, device)) {
+        settings.present = info.present;
+        // 随机 64 位 UUID，所以不会跟任何真实纹理的句柄撞上。SceneColor 由 RenderTargetSet 拥有，
+        // 不进 ResourceRegistry —— 这个 id 只是让 ImGuiPass 认出「要的是那张离屏目标」。
+        settings.scene_color_id = TextureHandle::generate();
+    }
 
     arti::renderer::RenderDevice* device{ nullptr };
     detail::ResourceRegistry resources;
     std::unique_ptr<Pipeline> pipeline;
+    FrameSettings settings;
 };
 
 Renderer::Renderer(arti::renderer::RenderDevice& device, const RendererCreateInfo& info)
@@ -96,16 +102,29 @@ TextureHandle Renderer::flatNormalTexture() const noexcept {
     return m_impl->resources.flatNormalTexture();
 }
 
-FrameStatistics Renderer::renderFrame(const RenderScene& scene) {
+FrameStatistics Renderer::renderFrame(const RenderScene& scene, const FrameOverlay& overlay) {
     const auto output = outputInfo();
     if (!output.available) {
         // 窗口最小化 / swapchain 待重建，这一帧整体跳过。
         return FrameStatistics{};
     }
 
-    FrameContext frame{ scene, m_impl->resources, output };
+    FrameContext frame{ scene, overlay, m_impl->resources, output, m_impl->settings };
     m_impl->pipeline->render(frame);
     return frame.statistics();
+}
+
+void Renderer::setPresentMode(PresentMode mode) noexcept { m_impl->settings.present = mode; }
+
+PresentMode Renderer::presentMode() const noexcept { return m_impl->settings.present; }
+
+void Renderer::setSceneTargetSize(uint32_t width, uint32_t height) noexcept {
+    m_impl->settings.scene_target_width = width;
+    m_impl->settings.scene_target_height = height;
+}
+
+uint64_t Renderer::sceneColorTextureId() const noexcept {
+    return imguiTextureId(m_impl->settings.scene_color_id);
 }
 
 RenderOutputInfo Renderer::outputInfo() const noexcept {

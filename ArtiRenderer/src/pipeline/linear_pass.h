@@ -3,6 +3,7 @@
 #include "frame_context.h"
 #include "render_target_set.h"
 
+#include <cstddef>
 #include <string_view>
 
 namespace arti::rendering {
@@ -14,6 +15,9 @@ public:
             RenderTargetSet& targets) noexcept;
 
     nvrhi::IDevice& device() const noexcept;
+
+    // 飞行中的帧数。每帧一份的资源（比如上传型顶点缓冲）按它开数组，避免覆盖 GPU 还在读的那份。
+    size_t frameSlotCount() const noexcept;
 
     FrameContext& frame() const noexcept;
     // 目标已经由管线建好了，pass 直接用。想知道尺寸就问它要 framebuffer info。
@@ -33,6 +37,12 @@ public:
 
     nvrhi::IDevice& device() const noexcept;
     nvrhi::ICommandList& commands() const noexcept;
+
+    // 本帧用哪个槽位。和 prepare 时的 frameSlotCount() 配套。
+    size_t frameSlotIndex() const noexcept;
+
+    // 本帧 backbuffer 的颜色纹理。清屏这类整张纹理的操作要的是纹理本身而不是 framebuffer。
+    nvrhi::ITexture& outputColor() const noexcept;
 
     FrameContext& frame() const noexcept;
     RenderTargetSet& targets() const noexcept;

@@ -2,6 +2,7 @@
 
 #include "log.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace arti::rendering {
@@ -37,15 +38,21 @@ nvrhi::TextureDesc makeDepthDesc(uint32_t width, uint32_t height) {
 
 } // namespace
 
-void RenderTargetSet::prepare(nvrhi::IDevice& device, nvrhi::IFramebuffer& output_framebuffer) {
+void RenderTargetSet::prepare(nvrhi::IDevice& device, nvrhi::IFramebuffer& output_framebuffer,
+        uint32_t requested_width, uint32_t requested_height) {
     m_output_framebuffer = &output_framebuffer;
 
     const auto& output_info = output_framebuffer.getFramebufferInfo();
-    const auto width = output_info.width;
-    const auto height = output_info.height;
-    if (width == 0 || height == 0) {
+    if (output_info.width == 0 || output_info.height == 0) {
         throw std::invalid_argument("Render targets need a non-zero size.");
     }
+
+    // 请求尺寸只要有一维是 0 就整个回退到输出尺寸 —— 半个请求没有意义。
+    const bool use_requested = requested_width != 0 && requested_height != 0;
+    // 面板被折叠或拖到极小时 ImGui 会给出 0 甚至负值（调用方转成 uint32 后可能极大），
+    // 这里夹一下：为这种瞬时状态抛异常会把整个应用带走。
+    const auto width = use_requested ? std::max(requested_width, 1u) : output_info.width;
+    const auto height = use_requested ? std::max(requested_height, 1u) : output_info.height;
     if (m_scene_framebuffer && m_width == width && m_height == height) {
         return;
     }

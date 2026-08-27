@@ -1,7 +1,8 @@
-#include "forward_opaque_pass.h"
+#include "unlit_opaque_pass.h"
 
 #include "artichoco/renderer/slang_compiler.h"
 #include "artichoco/renderer/vulkan/nvrhi_shader_factory.h"
+#include "draw_resolve.h"
 #include "log.h"
 #include "mesh_vertex_layout.h"
 #include "nvrhi_conversion.h"
@@ -17,18 +18,19 @@
 namespace arti::rendering {
 namespace {
 
-// push constant，Vulkan 保证至少 128 字节可用，这里 80。
-struct ForwardDrawConstants {
+// unlit 不读光照，所以 view_projection 直接乘进 MVP，不需要逐帧 UBO。80 字节。
+struct UnlitDrawConstants {
     std::array<float, 16> model_view_projection;
     std::array<float, 4> base_color;
 };
 
-static_assert(std::is_standard_layout_v<ForwardDrawConstants>);
-static_assert(sizeof(ForwardDrawConstants) == sizeof(float) * 20);
+static_assert(std::is_standard_layout_v<UnlitDrawConstants>);
+static_assert(sizeof(UnlitDrawConstants) == sizeof(float) * 20);
+static_assert(sizeof(UnlitDrawConstants) <= 128, "Vulkan only guarantees 128 push constant bytes.");
 
 } // namespace
 
-struct ForwardOpaquePass::Impl {
+struct UnlitOpaquePass::Impl {
     arti::renderer::ShaderReflection reflection;
     nvrhi::ShaderHandle vertex_shader;
     nvrhi::ShaderHandle pixel_shader;
@@ -41,8 +43,7 @@ struct ForwardOpaquePass::Impl {
     // operator==），所以窗口缩放不需要重建。
     nvrhi::FramebufferInfo pipeline_framebuffer_info;
 
-    // TextureHandle -> binding set。binding set 只依赖 binding layout 和纹理，
-    // 所以可以跨帧缓存，重建离屏目标时不用清。
+    // TextureHandle -> binding set。只依赖 binding layout 和纹理，可以跨帧缓存。
     std::unordered_map<TextureHandle, nvrhi::BindingSetHandle> binding_sets;
 
     nvrhi::IBindingSet& bindingSetFor(PassRecordContext& context, TextureHandle texture)
@@ -61,19 +62,19 @@ struct ForwardOpaquePass::Impl {
         auto binding_set = arti::renderer::vulkan::createNvrhiBindingSet(
                 context.device(), reflection, 0, *binding_layout, resources);
         if (!binding_set) {
-            throw std::runtime_error("NVRHI failed to create a forward binding set.");
+            throw std::runtime_error("NVRHI failed to create an unlit binding set.");
         }
         return *binding_sets.emplace(texture, std::move(binding_set)).first->second;
     }
 };
 
-ForwardOpaquePass::ForwardOpaquePass()
+UnlitOpaquePass::UnlitOpaquePass()
     : m_impl(std::make_unique<Impl>())
 {}
 
-ForwardOpaquePass::~ForwardOpaquePass() = default;
+UnlitOpaquePass::~UnlitOpaquePass() = default;
 
-void ForwardOpaquePass::prepare(PassPrepareContext& context)
+void UnlitOpaquePass::prepare(PassPrepareContext& context)
 {
     auto& device = context.device();
 
@@ -92,7 +93,7 @@ void ForwardOpaquePass::prepare(PassPrepareContext& context)
 
         m_impl->sampler = device.createSampler(nvrhi::SamplerDesc{});
         if (!m_impl->sampler) {
-            throw std::runtime_error("NVRHI failed to create the forward sampler.");
+            throw std::runtime_error("NVRHI failed to create the unlit sampler.");
         }
 
         const auto attributes = detail::toNvrhiAttributes(detail::meshVertexLayout());
@@ -100,11 +101,10 @@ void ForwardOpaquePass::prepare(PassPrepareContext& context)
                 attributes.data(), static_cast<uint32_t>(attributes.size()),
                 m_impl->vertex_shader);
         if (!m_impl->input_layout) {
-            throw std::runtime_error("NVRHI failed to create the forward input layout.");
+            throw std::runtime_error("NVRHI failed to create the unlit input layout.");
         }
     }
 
-    // 离屏目标由 RenderTargetSet 建好了，这里只读它的 framebuffer info 来建 PSO。
     const auto& framebuffer_info = context.targets().sceneFramebuffer().getFramebufferInfo();
     if (!m_impl->pipeline ||
             m_impl->pipeline_framebuffer_info !=
@@ -112,10 +112,9 @@ void ForwardOpaquePass::prepare(PassPrepareContext& context)
         nvrhi::DepthStencilState depth_state;
         depth_state.enableDepthTest().enableDepthWrite().disableStencil();
         nvrhi::RasterState raster_state;
-        // 网格按「从外面看逆时针 = 正面」的常规约定编写，投影矩阵里翻了 Y
-        // （Vulkan 的 NDC 是 Y 向下），framebuffer 空间里的绕向因此反过来，
-        // 所以正面在这里声明为顺时针。
-        raster_state.setCullBack().setFrontCounterClockwise(false);
+        // 网格按「从外面看逆时针 = 正面」的常规约定编写。这个值是实测定下来的：把剔除关掉
+        // （深度测试自然给出正确图像）当基准，true 与基准逐位一致，false 会把正面剔掉。
+        raster_state.setCullBack().setFrontCounterClockwise(true);
         nvrhi::RenderState render_state;
         render_state.setDepthStencilState(depth_state).setRasterState(raster_state);
 
@@ -129,78 +128,61 @@ void ForwardOpaquePass::prepare(PassPrepareContext& context)
         // 用 FramebufferInfo 那个重载：吃 IFramebuffer* 的已经标了 [[deprecated]]。
         m_impl->pipeline = device.createGraphicsPipeline(pipeline_desc, framebuffer_info);
         if (!m_impl->pipeline) {
-            throw std::runtime_error("NVRHI failed to create the forward graphics pipeline.");
+            throw std::runtime_error("NVRHI failed to create the unlit graphics pipeline.");
         }
         m_impl->pipeline_framebuffer_info = framebuffer_info;
-        getLogChannel().debug("Created the forward graphics pipeline");
+        getLogChannel().debug("Created the unlit graphics pipeline");
     }
 }
 
-void ForwardOpaquePass::record(PassRecordContext& context)
+void UnlitOpaquePass::record(PassRecordContext& context)
 {
     auto& frame = context.frame();
     const auto& scene = frame.scene();
     auto& commands = context.commands();
-    auto& targets = context.targets();
 
-    const auto& clear = scene.clear_color;
-    commands.clearTextureFloat(&targets.sceneColor(), nvrhi::AllSubresources,
-            nvrhi::Color{ clear.r, clear.g, clear.b, clear.a });
-    commands.clearDepthStencilTexture(
-            &targets.sceneDepth(), nvrhi::AllSubresources, true, 1.0f, false, 0);
-
-    auto& framebuffer = targets.sceneFramebuffer();
+    auto& framebuffer = context.targets().sceneFramebuffer();
     nvrhi::ViewportState viewport;
     viewport.addViewportAndScissorRect(framebuffer.getFramebufferInfo().getViewport());
 
     const glm::mat4 view_projection = scene.view.projection * scene.view.view;
 
     for (const auto& draw: scene.draws) {
-        const auto* mesh = frame.resources().findMesh(draw.mesh);
-        if (mesh == nullptr) {
-            getLogChannel().warn("Skipping draw with unknown mesh {}", draw.mesh.toString());
+        const auto resolved = detail::resolveDraw(frame, draw);
+        if (!resolved) {
             continue;
         }
-        if (draw.submesh_index >= mesh->submeshes.size()) {
-            getLogChannel().warn("Skipping draw with out-of-range submesh {} on mesh {}",
-                    draw.submesh_index, draw.mesh.toString());
-            continue;
-        }
-        const auto& submesh = mesh->submeshes[draw.submesh_index];
-        if (submesh.index_count == 0) {
+        // 只画自己那种材质。类型由 PSO 表达，不再需要 shader 里的分支开关。
+        if (resolved->material.type != MaterialType::Unlit) {
             continue;
         }
 
-        // 材质缺失时用默认材质（白色 unlit），不要因此丢掉几何体。
-        const Material material = frame.resources().findMaterial(draw.material) != nullptr
-                ? *frame.resources().findMaterial(draw.material)
-                : Material{};
-
-        ForwardDrawConstants constants{};
+        UnlitDrawConstants constants{};
         const glm::mat4 mvp = view_projection * draw.transform;
         std::memcpy(constants.model_view_projection.data(), glm::value_ptr(mvp),
                 sizeof(constants.model_view_projection));
-        std::memcpy(constants.base_color.data(), glm::value_ptr(material.base_color),
+        std::memcpy(constants.base_color.data(), glm::value_ptr(resolved->material.base_color),
                 sizeof(constants.base_color));
 
         nvrhi::GraphicsState state;
         state.setPipeline(m_impl->pipeline)
                 .setFramebuffer(&framebuffer)
                 .setViewport(viewport)
-                .addBindingSet(&m_impl->bindingSetFor(context, material.base_color_texture))
+                .addBindingSet(&m_impl->bindingSetFor(
+                        context, resolved->material.base_color_texture))
                 .addVertexBuffer(nvrhi::VertexBufferBinding()
                                 .setBuffer(&context.vertexBuffer(draw.mesh))
                                 .setSlot(0))
                 .setIndexBuffer(nvrhi::IndexBufferBinding()
                                 .setBuffer(&context.indexBuffer(draw.mesh))
                                 .setFormat(detail::toNvrhiIndexFormat(
-                                        mesh->index_buffer.indexType())));
+                                        resolved->mesh->index_buffer.indexType())));
         commands.setGraphicsState(state);
         commands.setPushConstants(&constants, sizeof(constants));
         commands.drawIndexed(nvrhi::DrawArguments{}
-                        .setVertexCount(submesh.index_count)
-                        .setStartIndexLocation(submesh.index_offset)
-                        .setStartVertexLocation(submesh.vertex_offset));
+                        .setVertexCount(resolved->submesh->index_count)
+                        .setStartIndexLocation(resolved->submesh->index_offset)
+                        .setStartVertexLocation(resolved->submesh->vertex_offset));
 
         ++frame.statistics().draw_calls;
         ++frame.statistics().submeshes;

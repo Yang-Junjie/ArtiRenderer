@@ -1,3 +1,8 @@
 [submodule "ArtiChoco"]
 	path = ArtiChoco
 	url = https://github.com/Yang-Junjie/ArtiChoco.git
+[submodule "third_party/imgui"]
+	path = third_party/imgui
+	url = https://github.com/ocornut/imgui.git
+	branch = docking
+	shallow = true

@@ -1,6 +1,12 @@
-// 前向 unlit 着色。顶点属性的 location 必须和
-// detail::meshVertexLayout() 的顺序一致（nvrhi Vulkan 后端按数组下标分配 location）。
+// 前向 unlit 着色：base_color * base_color_texture，不参与光照。
+//
+// 顶点属性的 location 必须和 detail::meshVertexLayout() 的顺序一致
+// （nvrhi Vulkan 后端按数组下标分配 location）：
 //   0 position  1 normal  2 tangent  3 bitangent  4 uv
+// 这里只声明用得到的那两个。
+//
+// 不需要逐帧 UBO：unlit 不读光照，view_projection 直接在 CPU 侧乘进 MVP。所以这个 shader 的
+// binding layout 只有纹理和采样器两项，push constant 只有 80 字节。
 
 struct DrawConstants
 {
