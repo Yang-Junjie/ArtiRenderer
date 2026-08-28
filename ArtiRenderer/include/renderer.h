@@ -65,6 +65,8 @@ public:
 
     std::optional<TextureInfo> textureInfo(TextureHandle handle) const;
     std::optional<Material> material(MaterialHandle handle) const;
+    // 上传之后查网格的包围盒和规模。视锥剔除要靠它拿到局部包围盒 —— 顶点数据已经不在 CPU 侧了。
+    std::optional<MeshInfo> meshInfo(MeshHandle handle) const;
 
     TextureHandle whiteTexture() const noexcept;
     TextureHandle flatNormalTexture() const noexcept;

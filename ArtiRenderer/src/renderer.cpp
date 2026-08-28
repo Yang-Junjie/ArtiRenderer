@@ -96,6 +96,20 @@ std::optional<Material> Renderer::material(MaterialHandle handle) const {
     return found == nullptr ? std::nullopt : std::optional<Material>{ *found };
 }
 
+std::optional<MeshInfo> Renderer::meshInfo(MeshHandle handle) const {
+    const auto* mesh = m_impl->resources.findMesh(handle);
+    if (mesh == nullptr) {
+        return std::nullopt;
+    }
+
+    MeshInfo info;
+    info.bounds = mesh->bounds;
+    info.submesh_count = static_cast<uint32_t>(mesh->submeshes.size());
+    info.vertex_count = mesh->vertex_buffer.vertexCount();
+    info.index_count = mesh->index_buffer.indexCount();
+    return info;
+}
+
 TextureHandle Renderer::whiteTexture() const noexcept { return m_impl->resources.whiteTexture(); }
 
 TextureHandle Renderer::flatNormalTexture() const noexcept {
