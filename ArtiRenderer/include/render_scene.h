@@ -21,6 +21,21 @@ struct DrawItem {
     MaterialHandle material;
     glm::mat4 transform{ 1.0f };
     AABB world_bounds;
+    uint32_t picking_id{ 0 };
+};
+
+// 拾取请求。坐标是渲染目标内的像素（左上原点），不是窗口坐标 ——
+// 编辑器模式下场景画在 Viewport 面板里，两者不是一回事。
+struct PickRequest {
+    uint32_t x{ 0 };
+    uint32_t y{ 0 };
+};
+
+struct PickResult {
+    // DrawItem::picking_id，0 表示空
+    uint32_t picking_id{ 0 };
+    uint32_t x{ 0 };
+    uint32_t y{ 0 };
 };
 
 struct RenderScene {

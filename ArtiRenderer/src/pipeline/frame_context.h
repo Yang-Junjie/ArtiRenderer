@@ -5,6 +5,8 @@
 #include "renderer.h"
 #include "resource_registry.h"
 
+#include <optional>
+
 namespace arti::rendering {
 
 // Renderer 上那几个跨帧的开关，每帧快照进 FrameContext。单独成一个 struct 是为了让
@@ -16,6 +18,9 @@ struct FrameSettings {
     uint32_t scene_target_height{ 0 };
     // ImGuiPass 靠它认出「这次 draw 要的是 SceneColor」，从而绑 RenderTargetSet 而不是查注册表。
     TextureHandle scene_color_id;
+    // 这一帧要不要拾取。为空时 PickingPass 整个跳过 —— 连 ID 缓冲都不会建，
+    // 所以不用拾取的运行时零成本。
+    std::optional<PickRequest> pick;
 };
 
 // 一帧里所有 pass 共享的东西。Renderer 每帧构造一次，pass 不持有它。

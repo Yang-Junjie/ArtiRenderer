@@ -5,6 +5,7 @@
 #include "passes/blinn_phong_opaque_pass.h"
 #include "passes/clear_scene_pass.h"
 #include "passes/imgui_pass.h"
+#include "passes/picking_pass.h"
 #include "passes/present_pass.h"
 #include "passes/unlit_opaque_pass.h"
 
@@ -27,6 +28,11 @@ void LinearPipeline::addPass(LinearStage stage, std::unique_ptr<LinearPass> pass
     // 只校验、不排序。装错位置在这里就抛，而不是等画面不对再查。
     if (!m_passes.empty() && stage < m_passes.back().stage) {
         throw std::invalid_argument("Linear pipeline stages must be installed in order.");
+    }
+
+    // 记下 PickingPass 的位置，Renderer 取拾取结果要用。
+    if (auto* picking = dynamic_cast<PickingPass*>(pass.get())) {
+        m_picking_pass = picking;
     }
 
     Entry entry;
@@ -94,6 +100,8 @@ std::unique_ptr<Pipeline> createForwardPipeline(arti::renderer::RenderDevice& de
     pipeline->addPass(LinearStage::Clear, std::make_unique<ClearScenePass>());
     pipeline->addPass(LinearStage::Opaque, std::make_unique<UnlitOpaquePass>());
     pipeline->addPass(LinearStage::Opaque, std::make_unique<BlinnPhongOpaquePass>());
+    // 常驻安装但按需生效：没有拾取请求的帧 isEnabled() 是 false，ID 缓冲都不会建。
+    pipeline->addPass(LinearStage::Picking, std::make_unique<PickingPass>());
     pipeline->addPass(LinearStage::Output, std::make_unique<PresentPass>());
     // 常驻安装，但没有 draw data 的帧里 isEnabled() 是 false —— 不用 UI 的运行时不付代价，
     // 也不用为了开关 UI 去换一条管线。

@@ -71,7 +71,6 @@ public:
     TextureHandle whiteTexture() const noexcept;
     TextureHandle flatNormalTexture() const noexcept;
 
-    // overlay 默认为空 —— 不用 UI 的调用方一个字都不用改。
     FrameStatistics renderFrame(const RenderScene& scene, const FrameOverlay& overlay = {});
 
     // 运行时可切：编辑器里在「全屏预览」和「场景进面板」之间来回是常见操作，
@@ -86,6 +85,18 @@ public:
     // 把 SceneColor 喂给 ImGui::Image() 用的 id。只在 IntoUI 模式下有内容可采
     // —— Direct 模式下 SceneColor 每帧确实也画了，但那一帧的它已经被贴进 backbuffer 了。
     uint64_t sceneColorTextureId() const noexcept;
+
+    // GPU 拾取。坐标是场景渲染目标内的像素（左上原点），编辑器模式下就是 Viewport 面板内的位置。
+    //
+    // 必须在 renderFrame() **之前**调：请求要赶上这一帧的 ID 缓冲绘制。
+    // 只作用于紧接着的那一帧，不会残留。
+    void requestPick(const PickRequest& request) noexcept;
+
+    // 取走已经读回来的拾取结果（取走即清空）。读回是异步的，所以从 requestPick 到这里
+    // 返回非空之间会隔几帧 —— 调用方每帧问一次即可，不要阻塞等它。
+    //
+    // picking_id 是 DrawItem 里填的那个值；0 表示点在空处。
+    std::optional<PickResult> takePickResult() noexcept;
 
     RenderOutputInfo outputInfo() const noexcept;
     void waitIdle() const;

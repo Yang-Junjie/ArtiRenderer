@@ -5,6 +5,7 @@
 #include "detail/log.h"
 #include "detail/resource_registry.h"
 #include "pipeline/frame_context.h"
+#include "pipeline/passes/picking_pass.h"
 #include "pipeline/pipeline.h"
 
 #include <stdexcept>
@@ -119,11 +120,12 @@ TextureHandle Renderer::flatNormalTexture() const noexcept {
 FrameStatistics Renderer::renderFrame(const RenderScene& scene, const FrameOverlay& overlay) {
     const auto output = outputInfo();
     if (!output.available) {
-        // 窗口最小化 / swapchain 待重建，这一帧整体跳过。
         return FrameStatistics{};
     }
 
     FrameContext frame{ scene, overlay, m_impl->resources, output, m_impl->settings };
+    m_impl->settings.pick.reset();
+
     m_impl->pipeline->render(frame);
     return frame.statistics();
 }
@@ -139,6 +141,15 @@ void Renderer::setSceneTargetSize(uint32_t width, uint32_t height) noexcept {
 
 uint64_t Renderer::sceneColorTextureId() const noexcept {
     return imguiTextureId(m_impl->settings.scene_color_id);
+}
+
+void Renderer::requestPick(const PickRequest& request) noexcept {
+    m_impl->settings.pick = request;
+}
+
+std::optional<PickResult> Renderer::takePickResult() noexcept {
+    auto* picking = m_impl->pipeline->pickingPass();
+    return picking == nullptr ? std::nullopt : picking->takeResult();
 }
 
 RenderOutputInfo Renderer::outputInfo() const noexcept {

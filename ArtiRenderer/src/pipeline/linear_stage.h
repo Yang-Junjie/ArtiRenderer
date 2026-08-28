@@ -15,6 +15,10 @@ namespace arti::rendering {
 enum class LinearStage : uint8_t {
     Clear,
     Opaque,
+    // 拾取排在 Opaque 之后：它复用那个阶段写好的深度做 LessOrEqual 测试，
+    // 所以只有屏幕上可见的片元会写下 ID —— 「点到的」和「看到的」因此永远一致。
+    // 排在 Output 之前是因为它跟 backbuffer 无关，早点做完早点能读。
+    Picking,
     Output,
     // UI 排在 Output 之后，直接画进 backbuffer 而不是 SceneColor：UI 因此永远是原生分辨率，
     // 也不受将来场景侧后处理（tone mapping、缩放渲染）的影响。代价是 UI 不参与那些变换 ——
@@ -29,6 +33,8 @@ constexpr const char* linearStageName(LinearStage stage) noexcept {
             return "Clear";
         case LinearStage::Opaque:
             return "Opaque";
+        case LinearStage::Picking:
+            return "Picking";
         case LinearStage::Output:
             return "Output";
         case LinearStage::UI:

@@ -13,6 +13,7 @@ add_library(artirenderer STATIC
     src/pipeline/passes/clear_scene_pass.cpp
     src/pipeline/passes/draw_resolve.cpp
     src/pipeline/passes/imgui_pass.cpp
+    src/pipeline/passes/picking_pass.cpp
     src/pipeline/passes/present_pass.cpp
     src/pipeline/passes/unlit_opaque_pass.cpp
 )
@@ -55,6 +56,7 @@ set(ARTIRENDERER_SHADERS
     src/shaders/forward_unlit.slang
     src/shaders/forward_blinn_phong.slang
     src/shaders/imgui.slang
+    src/shaders/picking.slang
     src/shaders/present.slang
 )
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${ARTIRENDERER_SHADERS})

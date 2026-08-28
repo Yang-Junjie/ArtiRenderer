@@ -27,6 +27,8 @@ public:
 
     void render(FrameContext& frame) override;
 
+    PickingPass* pickingPass() noexcept override { return m_picking_pass; }
+
     // renderer::RenderPass
     void prepare(arti::renderer::RenderPassPrepareContext& context) override;
     void record(arti::renderer::RenderPassContext& context) override;
@@ -42,6 +44,8 @@ private:
     arti::renderer::RenderDevice* m_device{ nullptr };
     std::vector<Entry> m_passes;
     RenderTargetSet m_targets;
+    // 借用指针，所有权在 m_passes 里。装配时记下来，省得每次取结果都去遍历找。
+    PickingPass* m_picking_pass{ nullptr };
     // render() 每帧设好，prepare()/record() 回调里用。
     FrameContext* m_frame{ nullptr };
 };
