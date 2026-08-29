@@ -1,5 +1,6 @@
 #pragma once
 #include "aabb.h"
+#include "environment.h"
 #include "handle.h"
 #include "light.h"
 #include "material.h"

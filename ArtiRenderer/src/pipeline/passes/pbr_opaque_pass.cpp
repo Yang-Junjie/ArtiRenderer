@@ -290,9 +290,12 @@ void PbrOpaquePass::record(PassRecordContext& context)
     }
     // 没有方向光时 light_color 保持全 0，只剩环境光贡献。
 
-    // 环境光目前是个固定的小常量，和 Blinn-Phong 那条保持一致。RenderScene 还没有环境光字段，
-    // 等 IBL 落地时这里换成 irradiance / prefiltered cube + BRDF LUT。
-    constexpr glm::vec4 ambient{ 0.03f, 0.03f, 0.035f, 1.0f };
+    // 环境光来自 RenderScene::environment，现在还是个常数项。等 IBL 落地时这里换成
+    // irradiance / prefiltered cube + BRDF LUT，environment.equirectangular_texture 才会真正被用上。
+    const auto& environment = scene.environment;
+    const glm::vec4 ambient = environment.enabled
+            ? glm::vec4{ glm::vec3{ environment.sky_color } * environment.intensity, 1.0f }
+            : glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f };
     std::memcpy(frame_constants.ambient_color.data(), glm::value_ptr(ambient), sizeof(ambient));
 
     commands.writeBuffer(m_impl->frame_constants, &frame_constants, sizeof(frame_constants));

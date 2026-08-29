@@ -211,8 +211,12 @@ void BlinnPhongOpaquePass::record(PassRecordContext& context)
     }
     // 没有方向光时 light_color 保持全 0，只剩环境光贡献。
 
-    // 环境光目前是个固定的小常量。RenderScene 还没有环境光字段，等真需要再提上去。
-    constexpr glm::vec4 ambient{ 0.03f, 0.03f, 0.035f, 1.0f };
+    // 环境光来自 RenderScene::environment。关掉就只剩直接光。
+    // 默认值（sky_color 0.03、intensity 1）正好等于这里原来硬编码的那个常量。
+    const auto& environment = scene.environment;
+    const glm::vec4 ambient = environment.enabled
+            ? glm::vec4{ glm::vec3{ environment.sky_color } * environment.intensity, 1.0f }
+            : glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f };
     std::memcpy(frame_constants.ambient_color.data(), glm::value_ptr(ambient), sizeof(ambient));
 
     commands.writeBuffer(m_impl->frame_constants, &frame_constants, sizeof(frame_constants));

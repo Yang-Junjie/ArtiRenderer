@@ -1,5 +1,6 @@
 #pragma once
 #include "aabb.h"
+#include "environment.h"
 #include "handle.h"
 #include "light.h"
 
@@ -42,6 +43,8 @@ struct RenderScene {
     RenderView view;
     std::vector<DrawItem> draws;
     std::vector<LightDesc> lights;
+    // 环境光照。一个场景一份 —— 不像灯光那样是个列表，因为「环境」就是唯一的那个背景。
+    EnvironmentDesc environment;
     glm::vec4 clear_color{ 0.04f, 0.08f, 0.12f, 1.0f };
 
     // 线性曝光倍率，在 tone mapping 之前乘上去。1.0 表示「光照算出来的亮度直接进曲线」。
