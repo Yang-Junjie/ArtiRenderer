@@ -43,6 +43,12 @@ struct RenderScene {
     std::vector<DrawItem> draws;
     std::vector<LightDesc> lights;
     glm::vec4 clear_color{ 0.04f, 0.08f, 0.12f, 1.0f };
+
+    // 线性曝光倍率，在 tone mapping 之前乘上去。1.0 表示「光照算出来的亮度直接进曲线」。
+    //
+    // 放在场景上而不是相机上（RenderView）是跟 clear_color 一致的取舍：这两个都是「这一帧
+    // 怎么呈现」的旋钮，不是场景内容。真做多相机、每个相机自己的曝光时再搬进 RenderView。
+    float exposure{ 1.0f };
 };
 
 } // namespace arti::rendering

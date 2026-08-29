@@ -32,8 +32,9 @@ struct Renderer::Impl {
               resources(device),
               pipeline(createPipeline(info.pipeline, device)) {
         settings.present = info.present;
-        // 随机 64 位 UUID，所以不会跟任何真实纹理的句柄撞上。SceneColor 由 RenderTargetSet 拥有，
-        // 不进 ResourceRegistry —— 这个 id 只是让 ImGuiPass 认出「要的是那张离屏目标」。
+        // 随机 64 位 UUID，所以不会跟任何真实纹理的句柄撞上。离屏目标由 RenderTargetSet 拥有，
+        // 不进 ResourceRegistry —— 这个 id 只是让 ImGuiPass 认出「要的是那张离屏目标」，
+        // 实际解析到的是 tone mapping 之后的 DisplayColor。
         settings.scene_color_id = TextureHandle::generate();
     }
 

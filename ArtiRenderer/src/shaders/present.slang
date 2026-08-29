@@ -1,7 +1,10 @@
-// 把离屏的 SceneColor 贴到 backbuffer。全屏三角形，不需要顶点缓冲。
+// 把离屏的 DisplayColor 贴到 backbuffer。全屏三角形，不需要顶点缓冲。
+//
+// 采的是 tone mapping 之后的显示线性层，不是 SceneColor —— 这里只做搬运，不做任何色彩变换，
+// sRGB 编码由 backbuffer 的 sRGB view 在写入时完成。
 
-[[vk::binding(0, 0)]] Texture2D<float4> scene_color;
-[[vk::binding(1, 0)]] SamplerState scene_sampler;
+[[vk::binding(0, 0)]] Texture2D<float4> display_color;
+[[vk::binding(1, 0)]] SamplerState display_sampler;
 
 struct FullscreenVertexOutput
 {
@@ -22,5 +25,5 @@ FullscreenVertexOutput vertexMain(uint vertex_id : SV_VertexID)
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
-    return float4(scene_color.Sample(scene_sampler, input.uv).rgb, 1.0);
+    return float4(display_color.Sample(display_sampler, input.uv).rgb, 1.0);
 }

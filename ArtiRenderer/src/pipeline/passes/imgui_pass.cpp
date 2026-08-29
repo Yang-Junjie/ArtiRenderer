@@ -158,12 +158,13 @@ struct ImGuiPass::Impl {
     Resolved resolve(PassRecordContext& context, ImTextureID id) {
         const auto handle = toTextureHandle(id);
 
-        // SceneColor：由 RenderTargetSet 拥有，不在注册表里，所以走单独这条路。
-        // 数据是线性的（RGBA8_UNORM 离屏目标），不解码。
+        // 场景那张离屏目标：由 RenderTargetSet 拥有，不在注册表里，所以走单独这条路。
+        // 采的是 DisplayColor（tone mapping 之后的显示线性 RGBA8_UNORM），不是 HDR 的
+        // SceneColor —— 否则编辑器面板里看到的会是未压缩的原始亮度。数据是线性的，不解码。
         if (handle == context.frame().settings().scene_color_id) {
             auto& targets = context.targets();
             if (!scene_color_set || scene_color_revision != targets.revision()) {
-                scene_color_set = makeBindingSet(context.device(), targets.sceneColor());
+                scene_color_set = makeBindingSet(context.device(), targets.displayColor());
                 scene_color_revision = targets.revision();
             }
             return { scene_color_set, false };

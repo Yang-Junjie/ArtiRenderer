@@ -11,12 +11,16 @@ namespace arti::rendering {
 // 目标搬到这里而不是留在产出它的 pass 里，是为了解开 pass 之间的耦合：下游想读 SceneColor
 // 不必认识上游 pass 的具体类型，中间插一个 pass 也不用改谁的构造函数。
 //
-// 名字是固定的、不是泛型的 slot 机制：这几个名字承载了色彩空间契约（scene 是场景线性，
-// output 是编码后的 backbuffer），泛型槽谁都能造一个新目标，这层含义就没了。也不按名字查表 ——
-// 那是已经删掉的 PassBlackboard 的形状。
+// 名字是固定的、不是泛型的 slot 机制：这几个名字承载了色彩空间契约，泛型槽谁都能造一个新目标，
+// 这层含义就没了。也不按名字查表 —— 那是已经删掉的 PassBlackboard 的形状。
 //
-// 现在只有 scene 和 output 两层。tone mapping 之后的 display-linear 层还不存在（SceneColor 是
-// RGBA8_UNORM 线性，backbuffer view 是 sRGB，编码由硬件在写入时完成），等真做 tone mapping 再加。
+// 三层，色彩空间逐层收窄：
+//   scene   —— 场景线性、HDR（RGBA16_FLOAT）。光照结果直接写这里，值可以远超 1.0。
+//   display —— 显示线性、LDR（RGBA8_UNORM）。TonemapPass 把 scene 压进 [0,1] 的产物。
+//   output  —— 本帧 backbuffer，view 是 sRGB，编码由硬件在写入时完成。
+//
+// scene 和 display 分开是 tone mapping 的必要配套：编辑器模式下 PresentPass 不跑，场景是被
+// ImGui 当纹理采的，所以压缩必须发生在一个**纹理**里，不能只在写 backbuffer 时顺手做。
 class RenderTargetSet {
 public:
     RenderTargetSet() = default;
@@ -43,12 +47,17 @@ public:
     nvrhi::ITexture& sceneDepth() const;
     nvrhi::IFramebuffer& sceneFramebuffer() const;
 
+    nvrhi::ITexture& displayColor() const;
+    nvrhi::IFramebuffer& displayFramebuffer() const;
+
     nvrhi::IFramebuffer& outputFramebuffer() const;
 
 private:
     nvrhi::TextureHandle m_scene_color;
     nvrhi::TextureHandle m_scene_depth;
     nvrhi::FramebufferHandle m_scene_framebuffer;
+    nvrhi::TextureHandle m_display_color;
+    nvrhi::FramebufferHandle m_display_framebuffer;
     nvrhi::IFramebuffer* m_output_framebuffer{ nullptr };
     uint32_t m_width{ 0 };
     uint32_t m_height{ 0 };

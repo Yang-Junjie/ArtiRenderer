@@ -17,8 +17,11 @@ enum class LinearStage : uint8_t {
     Opaque,
     // 拾取排在 Opaque 之后：它复用那个阶段写好的深度做 LessOrEqual 测试，
     // 所以只有屏幕上可见的片元会写下 ID —— 「点到的」和「看到的」因此永远一致。
-    // 排在 Output 之前是因为它跟 backbuffer 无关，早点做完早点能读。
+    // 排在 PostProcess 之前是因为它读的是深度、跟颜色无关，而读回是异步的：早点提交早点能取。
     Picking,
+    // 场景侧后处理：读 SceneColor（场景线性 HDR），写 DisplayColor（显示线性 LDR）。
+    // 必须排在 Opaque 之后（要读完整的场景）、Output 之前（PresentPass 贴的是 DisplayColor）。
+    PostProcess,
     Output,
     // UI 排在 Output 之后，直接画进 backbuffer 而不是 SceneColor：UI 因此永远是原生分辨率，
     // 也不受将来场景侧后处理（tone mapping、缩放渲染）的影响。代价是 UI 不参与那些变换 ——
@@ -35,6 +38,8 @@ constexpr const char* linearStageName(LinearStage stage) noexcept {
             return "Opaque";
         case LinearStage::Picking:
             return "Picking";
+        case LinearStage::PostProcess:
+            return "PostProcess";
         case LinearStage::Output:
             return "Output";
         case LinearStage::UI:

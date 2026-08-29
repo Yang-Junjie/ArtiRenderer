@@ -15,6 +15,7 @@ add_library(artirenderer STATIC
     src/pipeline/passes/imgui_pass.cpp
     src/pipeline/passes/picking_pass.cpp
     src/pipeline/passes/present_pass.cpp
+    src/pipeline/passes/tonemap_pass.cpp
     src/pipeline/passes/unlit_opaque_pass.cpp
 )
 add_library(ArtiRenderer::Renderer ALIAS artirenderer)
@@ -58,6 +59,7 @@ set(ARTIRENDERER_SHADERS
     src/shaders/imgui.slang
     src/shaders/picking.slang
     src/shaders/present.slang
+    src/shaders/tonemap.slang
 )
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${ARTIRENDERER_SHADERS})
 target_sources(artirenderer PRIVATE ${ARTIRENDERER_SHADERS})
