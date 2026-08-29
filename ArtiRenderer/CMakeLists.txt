@@ -1,6 +1,7 @@
 add_library(artirenderer STATIC
     src/renderer.cpp
     src/detail/log.cpp
+    src/detail/compute_program.cpp
     src/detail/mesh_vertex_layout.cpp
     src/detail/nvrhi_conversion.cpp
     src/detail/resource_registry.cpp
@@ -12,10 +13,12 @@ add_library(artirenderer STATIC
     src/pipeline/passes/blinn_phong_opaque_pass.cpp
     src/pipeline/passes/clear_scene_pass.cpp
     src/pipeline/passes/draw_resolve.cpp
+    src/pipeline/passes/environment_bake_pass.cpp
     src/pipeline/passes/imgui_pass.cpp
     src/pipeline/passes/pbr_opaque_pass.cpp
     src/pipeline/passes/picking_pass.cpp
     src/pipeline/passes/present_pass.cpp
+    src/pipeline/passes/sky_pass.cpp
     src/pipeline/passes/tonemap_pass.cpp
     src/pipeline/passes/unlit_opaque_pass.cpp
 )
@@ -58,6 +61,12 @@ set(ARTIRENDERER_SHADERS
     src/shaders/forward_unlit.slang
     src/shaders/forward_blinn_phong.slang
     src/shaders/forward_pbr.slang
+    src/shaders/ibl_common.slang
+    src/shaders/equirect_to_cube.slang
+    src/shaders/irradiance.slang
+    src/shaders/prefilter.slang
+    src/shaders/brdf_lut.slang
+    src/shaders/skybox.slang
     src/shaders/imgui.slang
     src/shaders/picking.slang
     src/shaders/present.slang

@@ -32,6 +32,11 @@ struct EnvironmentDesc {
     // 关掉就完全没有环境项，只剩直接光。默认开启，配合上面的默认值正好等于
     // 引入这个结构之前 pass 里硬编码的那个环境光，所以老场景的观感不变。
     bool enabled{ true };
+
+    // 要不要把环境画成天空背景（SkyPass）。关掉时背景是 clear_color，但 IBL 照常起作用 ——
+    // 想让物体接受环境光而背景保持纯色时用得上（比如产品渲染）。
+    // 没有环境贴图时这一项没有意义：天空采的就是烘出来的那张 cube。
+    bool sky_visible{ true };
 };
 
 } // namespace arti::rendering

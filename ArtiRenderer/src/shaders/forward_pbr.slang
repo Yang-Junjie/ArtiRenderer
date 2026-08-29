@@ -27,6 +27,8 @@ struct FrameConstants
     // xyz = 颜色，w = 强度
     float4 light_color;
     float4 ambient_color;
+    // x = 环境强度倍率，y = IBL 是否就绪（>0.5 才走 IBL），z = prefiltered 的 mip 数
+    float4 environment_params;
 };
 
 // 逐材质。纹理是采出来的原值，这里是乘在上面的系数。
@@ -51,6 +53,12 @@ struct MaterialConstants
 // 五张贴图共用一个采样器。TextureDesc 目前不带采样状态，所以没有逐贴图的过滤/寻址可言；
 // 真要按 glTF 的 sampler 走时，改的是 TextureDesc 而不是这里。
 [[vk::binding(8, 0)]] SamplerState material_sampler;
+// IBL 三件套，由 EnvironmentBakePass 烘出来。没有环境贴图时它们是 1×1 的黑图（不是空句柄，
+// 否则 binding set 建不起来），此时 environment_params.y 是 0，着色走常数环境项那条分支。
+[[vk::binding(9, 0)]] TextureCube<float4> irradiance_cube;
+[[vk::binding(10, 0)]] TextureCube<float4> prefiltered_cube;
+[[vk::binding(11, 0)]] Texture2D<float4> brdf_lut;
+[[vk::binding(12, 0)]] SamplerState ibl_sampler;
 
 static const float kPi = 3.14159265359;
 
@@ -181,12 +189,43 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         direct = (diffuse + specular) * radiance * nol;
     }
 
-    // 环境项是 IBL 落地之前的占位：一个常数环境光。没有方向可言，所以按 metallic 硬分成
-    // 漫反射和镜面两份，而不是走 Fresnel。给金属留一份镜面是刻意的 —— 否则金属在没有 IBL 时
-    // 会是纯黑，看起来像 BRDF 写错了。IBL 会把这两行换成 irradiance / prefiltered + BRDF LUT。
-    const float3 ambient = frame_constants.ambient_color.rgb * occlusion;
-    const float3 ambient_diffuse = ambient * base_color * (1.0 - metallic);
-    const float3 ambient_specular = ambient * f0;
+    // 环境项。有 IBL 就走 split-sum，没有就退回常数环境光。
+    float3 ambient_diffuse;
+    float3 ambient_specular;
+    if (frame_constants.environment_params.y > 0.5)
+    {
+        const float environment_weight = frame_constants.environment_params.x * occlusion;
+
+        // 漫反射：辐照度图直接乘 albedo。**这里刻意不除 π** —— irradiance.slang 产出的是
+        // 真正的辐照度 E，1/π 没折进去，两边是配对的约定（见那个文件顶部的说明）。
+        const float3 irradiance = irradiance_cube.SampleLevel(ibl_sampler, normal, 0.0).rgb;
+
+        // 镜面：split-sum。prefiltered 的 mip 对应 roughness，mip 数从 CPU 传进来而不是硬编码。
+        const float3 reflection = reflect(-view_direction, normal);
+        const float prefiltered_mip =
+                roughness * max(frame_constants.environment_params.z - 1.0, 0.0);
+        const float3 prefiltered =
+                prefiltered_cube.SampleLevel(ibl_sampler, reflection, prefiltered_mip).rgb;
+        const float2 brdf = brdf_lut.SampleLevel(ibl_sampler, float2(nov, roughness), 0.0).rg;
+
+        // 环境的 Fresnel 要带 roughness：粗糙表面的掠射角反射远不如光滑表面那么强，
+        // 用直接光那个 fresnelSchlick 会让粗糙金属边缘出现一圈假亮边。
+        const float3 ibl_fresnel =
+                f0 + (max(float3(1.0 - roughness), f0) - f0) * pow(1.0 - nov, 5.0);
+
+        ambient_diffuse = (1.0 - ibl_fresnel) * (1.0 - metallic) * base_color * irradiance *
+                environment_weight;
+        ambient_specular = prefiltered * (ibl_fresnel * brdf.x + brdf.y) * environment_weight;
+    }
+    else
+    {
+        // 没有 IBL 时的占位：一个常数环境光，按 metallic 硬分成漫反射和镜面两份，而不是走
+        // Fresnel（没有方向可言）。给金属留一份镜面是刻意的 —— 否则金属会是纯黑，
+        // 看起来像 BRDF 写错了。
+        const float3 ambient = frame_constants.ambient_color.rgb * occlusion;
+        ambient_diffuse = ambient * base_color * (1.0 - metallic);
+        ambient_specular = ambient * f0;
+    }
 
     return float4(direct + ambient_diffuse + ambient_specular + emissive, base_color_sample.a);
 }

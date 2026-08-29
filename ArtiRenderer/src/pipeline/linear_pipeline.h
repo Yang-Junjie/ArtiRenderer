@@ -1,5 +1,6 @@
 #pragma once
 #include "artichoco/renderer/render_pass.h"
+#include "environment_resources.h"
 #include "linear_pass.h"
 #include "linear_stage.h"
 #include "pipeline.h"
@@ -44,6 +45,8 @@ private:
     arti::renderer::RenderDevice* m_device{ nullptr };
     std::vector<Entry> m_passes;
     RenderTargetSet m_targets;
+    // 由管线拥有、跨 pass 共享，和 m_targets 同一个角色：EnvironmentBakePass 写，下游读。
+    EnvironmentResources m_environment;
     // 借用指针，所有权在 m_passes 里。装配时记下来，省得每次取结果都去遍历找。
     PickingPass* m_picking_pass{ nullptr };
     // render() 每帧设好，prepare()/record() 回调里用。

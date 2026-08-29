@@ -10,21 +10,25 @@ namespace arti::rendering {
 // Clear 独立成一个 stage（而不是让第一个绘制 pass 顺手清屏）是分 pass 的必要配套：不透明
 // 材质按类型拆成多个 pass 之后，「谁负责清屏」如果靠约定就成了隐式耦合 —— 改动 pass 顺序会
 // 静默地改变清屏行为。
-//
-// 将来加 compute（比如 IBL 烘焙）就在这里插一个值，顺序约束立刻生效，不用改任何已有 pass。
 enum class LinearStage : uint8_t {
+    // 纯 compute，不碰任何 framebuffer：IBL 烘焙就在这里。排在最前面是因为它的产物
+    // （irradiance / prefiltered / BRDF LUT）是 Opaque 的输入，而它自己不依赖任何渲染目标。
+    EnvironmentBake,
     Clear,
     Opaque,
-    // 拾取排在 Opaque 之后：它复用那个阶段写好的深度做 LessOrEqual 测试，
+    // 天空排在 Opaque 之后而不是之前：深度测试 LessOrEqual + 不写深度，只填没被物体覆盖的
+    // 像素。反过来先画天空的话，每个被物体挡住的像素都白画一遍。
+    Sky,
+    // 拾取排在 Sky 之后：它复用 Opaque 写好的深度做 LessOrEqual 测试，
     // 所以只有屏幕上可见的片元会写下 ID —— 「点到的」和「看到的」因此永远一致。
     // 排在 PostProcess 之前是因为它读的是深度、跟颜色无关，而读回是异步的：早点提交早点能取。
     Picking,
     // 场景侧后处理：读 SceneColor（场景线性 HDR），写 DisplayColor（显示线性 LDR）。
-    // 必须排在 Opaque 之后（要读完整的场景）、Output 之前（PresentPass 贴的是 DisplayColor）。
+    // 必须排在 Opaque / Sky 之后（要读完整的场景）、Output 之前（PresentPass 贴的是 DisplayColor）。
     PostProcess,
     Output,
     // UI 排在 Output 之后，直接画进 backbuffer 而不是 SceneColor：UI 因此永远是原生分辨率，
-    // 也不受将来场景侧后处理（tone mapping、缩放渲染）的影响。代价是 UI 不参与那些变换 ——
+    // 也不受场景侧后处理（tone mapping、缩放渲染）的影响。代价是 UI 不参与那些变换 ——
     // 对调试 UI 来说这正是想要的。
     UI,
 };
@@ -32,10 +36,14 @@ enum class LinearStage : uint8_t {
 // 稳定的 stage 名字，会进 GPU marker 标签，所以改名会改变 capture 里看到的东西。
 constexpr const char* linearStageName(LinearStage stage) noexcept {
     switch (stage) {
+        case LinearStage::EnvironmentBake:
+            return "EnvironmentBake";
         case LinearStage::Clear:
             return "Clear";
         case LinearStage::Opaque:
             return "Opaque";
+        case LinearStage::Sky:
+            return "Sky";
         case LinearStage::Picking:
             return "Picking";
         case LinearStage::PostProcess:

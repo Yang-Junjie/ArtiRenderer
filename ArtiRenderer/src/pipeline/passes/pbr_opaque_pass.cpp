@@ -12,6 +12,7 @@
 #include <cstring>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <limits>
 #include <stdexcept>
 #include <type_traits>
 #include <unordered_map>
@@ -44,10 +45,12 @@ struct PbrFrameConstants {
     std::array<float, 4> light_direction;
     std::array<float, 4> light_color;
     std::array<float, 4> ambient_color;
+    // x = 环境强度，y = IBL 是否就绪，z = prefiltered mip 数，w 未用
+    std::array<float, 4> environment_params;
 };
 
 static_assert(std::is_standard_layout_v<PbrFrameConstants>);
-static_assert(sizeof(PbrFrameConstants) == sizeof(float) * 32);
+static_assert(sizeof(PbrFrameConstants) == sizeof(float) * 36);
 
 // 逐材质常量。
 struct PbrMaterialConstants {
@@ -128,10 +131,26 @@ struct PbrOpaquePass::Impl {
     };
     std::unordered_map<MaterialHandle, MaterialResources> materials;
 
+    // 绑定集里既有逐材质的贴图，也有逐帧的 IBL 三件套。后者换了（环境重烘）就得整批重建，
+    // 所以记一份 revision 在这里，而不是塞进每个 MaterialResources 里各存一份。
+    uint64_t environment_revision{ std::numeric_limits<uint64_t>::max() };
+
+    void invalidateIfEnvironmentChanged(const EnvironmentResources& environment)
+    {
+        if (environment_revision == environment.revision) {
+            return;
+        }
+        for (auto& [handle, entry]: materials) {
+            entry.binding_set = nullptr;
+        }
+        environment_revision = environment.revision;
+    }
+
     MaterialResources& resourcesFor(PassRecordContext& context, MaterialHandle handle,
             const Material& material)
     {
         auto& device = context.device();
+        const auto& environment = context.environment();
         const auto textures =
                 texturesOf(material, context.frame().resources().flatNormalTexture());
 
@@ -167,6 +186,14 @@ struct PbrOpaquePass::Impl {
                         "emissive_texture", context.texture(textures.emissive)),
                 arti::renderer::vulkan::NvrhiBindingResource::Sampler(
                         "material_sampler", *sampler),
+                arti::renderer::vulkan::NvrhiBindingResource::Texture(
+                        "irradiance_cube", *environment.irradiance),
+                arti::renderer::vulkan::NvrhiBindingResource::Texture(
+                        "prefiltered_cube", *environment.prefiltered),
+                arti::renderer::vulkan::NvrhiBindingResource::Texture(
+                        "brdf_lut", *environment.brdf_lut),
+                arti::renderer::vulkan::NvrhiBindingResource::Sampler(
+                        "ibl_sampler", *environment.sampler),
             };
             entry.binding_set = arti::renderer::vulkan::createNvrhiBindingSet(
                     device, reflection, 0, *binding_layout, resources);
@@ -290,15 +317,22 @@ void PbrOpaquePass::record(PassRecordContext& context)
     }
     // 没有方向光时 light_color 保持全 0，只剩环境光贡献。
 
-    // 环境光来自 RenderScene::environment，现在还是个常数项。等 IBL 落地时这里换成
-    // irradiance / prefiltered cube + BRDF LUT，environment.equirectangular_texture 才会真正被用上。
+    // 环境光来自 RenderScene::environment。有 IBL 时 ambient_color 不参与着色，
+    // 但照样填上 —— 烘焙还没就绪的那一帧会退回它。
     const auto& environment = scene.environment;
     const glm::vec4 ambient = environment.enabled
             ? glm::vec4{ glm::vec3{ environment.sky_color } * environment.intensity, 1.0f }
             : glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f };
     std::memcpy(frame_constants.ambient_color.data(), glm::value_ptr(ambient), sizeof(ambient));
 
+    const auto& ibl = context.environment();
+    const bool use_ibl = environment.enabled && ibl.ready;
+    frame_constants.environment_params = { environment.enabled ? environment.intensity : 0.0f,
+        use_ibl ? 1.0f : 0.0f, static_cast<float>(ibl.prefiltered_mips), 0.0f };
+
     commands.writeBuffer(m_impl->frame_constants, &frame_constants, sizeof(frame_constants));
+
+    m_impl->invalidateIfEnvironmentChanged(ibl);
 
     // 先把本帧要用到的材质常量全部写好，再进绘制循环。分两趟是为了不在 setGraphicsState 之间
     // 插 writeBuffer —— 那会让命令列表在绘制中途做资源状态转换。

@@ -4,10 +4,12 @@
 #include "log.h"
 #include "passes/blinn_phong_opaque_pass.h"
 #include "passes/clear_scene_pass.h"
+#include "passes/environment_bake_pass.h"
 #include "passes/imgui_pass.h"
 #include "passes/pbr_opaque_pass.h"
 #include "passes/picking_pass.h"
 #include "passes/present_pass.h"
+#include "passes/sky_pass.h"
 #include "passes/tonemap_pass.h"
 #include "passes/unlit_opaque_pass.h"
 
@@ -70,7 +72,7 @@ void LinearPipeline::prepare(arti::renderer::RenderPassPrepareContext& context) 
         if (!entry.pass->isEnabled(*m_frame)) {
             continue;
         }
-        PassPrepareContext pass_context{ context, *m_frame, m_targets };
+        PassPrepareContext pass_context{ context, *m_frame, m_targets, m_environment };
         entry.pass->prepare(pass_context);
     }
 }
@@ -86,7 +88,7 @@ void LinearPipeline::record(arti::renderer::RenderPassContext& context) {
             continue;
         }
         commands.beginMarker(entry.marker_label.c_str());
-        PassRecordContext pass_context{ context, *m_frame, m_targets };
+        PassRecordContext pass_context{ context, *m_frame, m_targets, m_environment };
         entry.pass->record(pass_context);
         commands.endMarker();
     }
@@ -99,10 +101,15 @@ std::unique_ptr<Pipeline> createForwardPipeline(arti::renderer::RenderDevice& de
     //
     // 清屏独立成 pass，所以两个 opaque pass 谁先谁后都不影响正确性（深度测试兜住遮挡）。
     // 每种材质一个 pass、一个 PSO —— 材质类型由 PSO 表达，着色器里不再有分支开关。
+    // IBL 烘焙排在最前面：它是纯 compute，产物是 Opaque 和 Sky 的输入，自己不依赖任何目标。
+    // 按环境贴图句柄缓存，所以只有换贴图的那一帧真的烘。
+    pipeline->addPass(LinearStage::EnvironmentBake, std::make_unique<EnvironmentBakePass>());
     pipeline->addPass(LinearStage::Clear, std::make_unique<ClearScenePass>());
     pipeline->addPass(LinearStage::Opaque, std::make_unique<UnlitOpaquePass>());
     pipeline->addPass(LinearStage::Opaque, std::make_unique<BlinnPhongOpaquePass>());
     pipeline->addPass(LinearStage::Opaque, std::make_unique<PbrOpaquePass>());
+    // 天空在不透明之后：深度测试挡掉被物体覆盖的像素，省一遍 overdraw。
+    pipeline->addPass(LinearStage::Sky, std::make_unique<SkyPass>());
     // 常驻安装但按需生效：没有拾取请求的帧 isEnabled() 是 false，ID 缓冲都不会建。
     pipeline->addPass(LinearStage::Picking, std::make_unique<PickingPass>());
     // 常驻启用：SceneColor 是 HDR，从这里开始下游看到的都是压好的 DisplayColor。
@@ -113,8 +120,8 @@ std::unique_ptr<Pipeline> createForwardPipeline(arti::renderer::RenderDevice& de
     // 也不用为了开关 UI 去换一条管线。
     pipeline->addPass(LinearStage::UI, std::make_unique<ImGuiPass>());
 
-    getLogChannel().info(
-            "Created forward pipeline (Clear -> Opaque x3 -> Tonemap -> Output -> UI)");
+    getLogChannel().info("Created forward pipeline (Bake -> Clear -> Opaque x3 -> Sky -> Tonemap "
+                         "-> Output -> UI)");
     return pipeline;
 }
 

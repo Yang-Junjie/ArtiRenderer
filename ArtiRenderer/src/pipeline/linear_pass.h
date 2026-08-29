@@ -1,5 +1,6 @@
 #pragma once
 #include "artichoco/renderer/render_pass.h"
+#include "environment_resources.h"
 #include "frame_context.h"
 #include "render_target_set.h"
 
@@ -12,7 +13,7 @@ namespace arti::rendering {
 class PassPrepareContext {
 public:
     PassPrepareContext(arti::renderer::RenderPassPrepareContext& rhi, FrameContext& frame,
-            RenderTargetSet& targets) noexcept;
+            RenderTargetSet& targets, EnvironmentResources& environment) noexcept;
 
     nvrhi::IDevice& device() const noexcept;
 
@@ -22,18 +23,21 @@ public:
     FrameContext& frame() const noexcept;
     // 目标已经由管线建好了，pass 直接用。想知道尺寸就问它要 framebuffer info。
     RenderTargetSet& targets() const noexcept;
+    // IBL 的烘焙产物。EnvironmentBakePass 写，下游读。
+    EnvironmentResources& environment() const noexcept;
 
 private:
     arti::renderer::RenderPassPrepareContext* m_rhi{ nullptr };
     FrameContext* m_frame{ nullptr };
     RenderTargetSet* m_targets{ nullptr };
+    EnvironmentResources* m_environment{ nullptr };
 };
 
 
 class PassRecordContext {
 public:
     PassRecordContext(arti::renderer::RenderPassContext& rhi, FrameContext& frame,
-            RenderTargetSet& targets) noexcept;
+            RenderTargetSet& targets, EnvironmentResources& environment) noexcept;
 
     nvrhi::IDevice& device() const noexcept;
     nvrhi::ICommandList& commands() const noexcept;
@@ -46,6 +50,7 @@ public:
 
     FrameContext& frame() const noexcept;
     RenderTargetSet& targets() const noexcept;
+    EnvironmentResources& environment() const noexcept;
 
     nvrhi::IBuffer& vertexBuffer(MeshHandle mesh) const;
     nvrhi::IBuffer& indexBuffer(MeshHandle mesh) const;
@@ -55,6 +60,7 @@ private:
     arti::renderer::RenderPassContext* m_rhi{ nullptr };
     FrameContext* m_frame{ nullptr };
     RenderTargetSet* m_targets{ nullptr };
+    EnvironmentResources* m_environment{ nullptr };
 };
 
 
