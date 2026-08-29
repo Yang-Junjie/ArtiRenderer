@@ -5,6 +5,7 @@
 #include "passes/blinn_phong_opaque_pass.h"
 #include "passes/clear_scene_pass.h"
 #include "passes/imgui_pass.h"
+#include "passes/pbr_opaque_pass.h"
 #include "passes/picking_pass.h"
 #include "passes/present_pass.h"
 #include "passes/tonemap_pass.h"
@@ -101,6 +102,7 @@ std::unique_ptr<Pipeline> createForwardPipeline(arti::renderer::RenderDevice& de
     pipeline->addPass(LinearStage::Clear, std::make_unique<ClearScenePass>());
     pipeline->addPass(LinearStage::Opaque, std::make_unique<UnlitOpaquePass>());
     pipeline->addPass(LinearStage::Opaque, std::make_unique<BlinnPhongOpaquePass>());
+    pipeline->addPass(LinearStage::Opaque, std::make_unique<PbrOpaquePass>());
     // 常驻安装但按需生效：没有拾取请求的帧 isEnabled() 是 false，ID 缓冲都不会建。
     pipeline->addPass(LinearStage::Picking, std::make_unique<PickingPass>());
     // 常驻启用：SceneColor 是 HDR，从这里开始下游看到的都是压好的 DisplayColor。
@@ -111,7 +113,8 @@ std::unique_ptr<Pipeline> createForwardPipeline(arti::renderer::RenderDevice& de
     // 也不用为了开关 UI 去换一条管线。
     pipeline->addPass(LinearStage::UI, std::make_unique<ImGuiPass>());
 
-    getLogChannel().info("Created forward pipeline (Clear -> Opaque x2 -> Tonemap -> Output -> UI)");
+    getLogChannel().info(
+            "Created forward pipeline (Clear -> Opaque x3 -> Tonemap -> Output -> UI)");
     return pipeline;
 }
 

@@ -13,6 +13,7 @@ add_library(artirenderer STATIC
     src/pipeline/passes/clear_scene_pass.cpp
     src/pipeline/passes/draw_resolve.cpp
     src/pipeline/passes/imgui_pass.cpp
+    src/pipeline/passes/pbr_opaque_pass.cpp
     src/pipeline/passes/picking_pass.cpp
     src/pipeline/passes/present_pass.cpp
     src/pipeline/passes/tonemap_pass.cpp
@@ -56,6 +57,7 @@ set_target_properties(artirenderer PROPERTIES FOLDER "ArtiRenderer")
 set(ARTIRENDERER_SHADERS
     src/shaders/forward_unlit.slang
     src/shaders/forward_blinn_phong.slang
+    src/shaders/forward_pbr.slang
     src/shaders/imgui.slang
     src/shaders/picking.slang
     src/shaders/present.slang
