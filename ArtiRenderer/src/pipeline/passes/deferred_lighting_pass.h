@@ -15,6 +15,9 @@ namespace arti::rendering {
 // 没有光源剔除，每个像素遍历全部光源 —— 几个到几十个够用，上百个才需要 tile / cluster 分桶。
 // 那一步加的是循环外面的一层索引，不用改着色本身。
 //
+// 光源缓冲按 frame slot 开数组（照 ImGuiPass / DebugLinePass 的形状），绑定集也跟着分 ——
+// 缓冲是绑定集里的一个 StructuredBuffer SRV，不像顶点缓冲那样单独绑。
+//
 // 输出目标用 RenderTargetSet::sceneColorFramebuffer()（只挂 SceneColor、不挂深度）：世界坐标
 // 要从深度反投影出来，也就是 SceneDepth 必须当 SRV 采，同一张图不能同时是深度附件
 // —— Vulkan 的 feedback loop。所以「这个像素有没有几何体」是靠采回来的深度自己判断的。

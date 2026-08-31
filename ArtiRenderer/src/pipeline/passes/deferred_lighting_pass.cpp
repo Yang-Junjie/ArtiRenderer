@@ -119,29 +119,38 @@ struct DeferredLightingPass::Impl {
 
     nvrhi::BufferHandle constants;
 
-    // G-Buffer 重建（改尺寸）或者环境重烘（IBL 三件套换了）都要重建绑定集，所以两个 revision
-    // 都记一份。初值取 max 是为了第一帧一定不相等。
-    uint64_t bound_gbuffer_revision{ std::numeric_limits<uint64_t>::max() };
-    uint64_t bound_environment_revision{ std::numeric_limits<uint64_t>::max() };
-    // 光源缓冲换了（扩容）也要重建绑定集，所以把绑进去的那个指针记下来。
-    nvrhi::IBuffer* bound_light_buffer{ nullptr };
-    nvrhi::BindingSetHandle binding_set;
+    // 光源缓冲每个 frame slot 一份，照 ImGuiPass / DebugLinePass 的形状：多帧在飞的时候，
+    // 下一帧的 writeBuffer 会撞上上一帧还在读的那份（WAR）。自动状态跟踪会插 barrier 保正确，
+    // 但那意味着新一帧的拷贝要等旧一帧的片元读完 —— 一个白给的跨帧串行点。
+    //
+    // 缓冲进了绑定集（是个 StructuredBuffer SRV，不像顶点缓冲那样单独绑），所以绑定集也得
+    // 跟着按 slot 分。各 slot 的绑定集不是同一帧建的，失效条件因此也各记一份。
+    struct FrameSlot {
+        nvrhi::BufferHandle lights;
+        size_t light_capacity{ 0 };
+        nvrhi::BindingSetHandle binding_set;
+        // 这个 slot 的绑定集是按哪一版资源建的：G-Buffer 改尺寸、环境重烘、光源缓冲扩容，
+        // 任一发生就要重建。初值取 max 是为了第一次一定不相等。
+        uint64_t bound_gbuffer_revision{ std::numeric_limits<uint64_t>::max() };
+        uint64_t bound_environment_revision{ std::numeric_limits<uint64_t>::max() };
+        nvrhi::IBuffer* bound_lights{ nullptr };
+    };
+    std::vector<FrameSlot> frame_slots;
 
-    // 本帧的光源，每帧 clear + 填充。留成成员是为了复用容量，不用每帧分配。
+    // 本帧的光源，每帧 clear + 填充。CPU 侧只要一份 —— 它在同一帧里就写进 GPU 缓冲了，
+    // 不跨帧存活，所以不用按 slot 分。留成成员只是为了复用容量。
     std::vector<GpuLight> lights;
-    nvrhi::BufferHandle light_buffer;
-    size_t light_capacity{ 0 };
 
     // 光源缓冲按需增长，不设上限。容量翻倍而不是精确匹配：帧间光源数抖动一两个不该每帧重建
-    // 缓冲，重建会连带重建绑定集。
-    void ensureLightBuffer(nvrhi::IDevice& device, size_t count) {
+    // 缓冲，重建会连带重建这个 slot 的绑定集。
+    void ensureLightBuffer(nvrhi::IDevice& device, FrameSlot& slot, size_t count) {
         // 至少留一个元素。0 字节的缓冲建不起来，而绑定集需要一个有效的缓冲 ——
         // 没有光源的帧靠 light_count = 0 让着色器一次循环都不进，不靠空缓冲。
         const size_t needed = std::max<size_t>(count, 1);
-        if (light_buffer && light_capacity >= needed) {
+        if (slot.lights && slot.light_capacity >= needed) {
             return;
         }
-        size_t capacity = std::max(light_capacity, kInitialLightCapacity);
+        size_t capacity = std::max(slot.light_capacity, kInitialLightCapacity);
         while (capacity < needed) {
             capacity *= 2;
         }
@@ -150,11 +159,11 @@ struct DeferredLightingPass::Impl {
                 .setStructStride(sizeof(GpuLight))
                 .setDebugName("ArtiRenderer LightBuffer")
                 .enableAutomaticStateTracking(nvrhi::ResourceStates::ShaderResource);
-        light_buffer = device.createBuffer(desc);
-        if (!light_buffer) {
+        slot.lights = device.createBuffer(desc);
+        if (!slot.lights) {
             throw std::runtime_error("NVRHI failed to create the deferred lighting light buffer.");
         }
-        light_capacity = capacity;
+        slot.light_capacity = capacity;
         getLogChannel().debug("Light buffer resized to {} lights", capacity);
     }
 
@@ -162,14 +171,14 @@ struct DeferredLightingPass::Impl {
     // EnvironmentBakePass::record() 才填上（连兜底的 1x1 黑图也是在那里发布的），prepare
     // 阶段读到的还是空句柄，建集会直接抛。EnvironmentBake < Lighting 这个 stage 顺序保证了
     // 到这里它们一定有效。
-    void ensureBindingSet(PassRecordContext& context) {
+    void ensureBindingSet(PassRecordContext& context, FrameSlot& slot) {
         auto& device = context.device();
         auto& targets = context.targets();
         auto& gbuffer = context.gbuffer();
         const auto& environment = context.environment();
-        if (binding_set && bound_gbuffer_revision == gbuffer.revision() &&
-                bound_environment_revision == environment.revision &&
-                bound_light_buffer == light_buffer.Get()) {
+        if (slot.binding_set && slot.bound_gbuffer_revision == gbuffer.revision() &&
+                slot.bound_environment_revision == environment.revision &&
+                slot.bound_lights == slot.lights.Get()) {
             return;
         }
         const std::array resources = {
@@ -194,16 +203,16 @@ struct DeferredLightingPass::Impl {
                     *environment.brdf_lut),
             arti::renderer::vulkan::NvrhiBindingResource::Sampler("ibl_sampler",
                     *environment.sampler),
-            arti::renderer::vulkan::NvrhiBindingResource::Buffer("lights", *light_buffer),
+            arti::renderer::vulkan::NvrhiBindingResource::Buffer("lights", *slot.lights),
         };
-        binding_set = arti::renderer::vulkan::createNvrhiBindingSet(device, reflection, 0,
+        slot.binding_set = arti::renderer::vulkan::createNvrhiBindingSet(device, reflection, 0,
                 *binding_layout, resources);
-        if (!binding_set) {
+        if (!slot.binding_set) {
             throw std::runtime_error("NVRHI failed to create the deferred lighting binding set.");
         }
-        bound_gbuffer_revision = gbuffer.revision();
-        bound_environment_revision = environment.revision;
-        bound_light_buffer = light_buffer.Get();
+        slot.bound_gbuffer_revision = gbuffer.revision();
+        slot.bound_environment_revision = environment.revision;
+        slot.bound_lights = slot.lights.Get();
     }
 };
 
@@ -215,6 +224,8 @@ DeferredLightingPass::~DeferredLightingPass() = default;
 void DeferredLightingPass::prepare(PassPrepareContext& context) {
     auto& device = context.device();
     auto& targets = context.targets();
+
+    m_impl->frame_slots.resize(context.frameSlotCount());
 
     if (!m_impl->binding_layout) {
         const auto program = arti::renderer::SlangCompiler::compileGraphics(
@@ -279,7 +290,7 @@ void DeferredLightingPass::prepare(PassPrepareContext& context) {
 }
 
 void DeferredLightingPass::record(PassRecordContext& context) {
-    if (!m_impl->pipeline) {
+    if (!m_impl->pipeline || m_impl->frame_slots.empty()) {
         throw std::logic_error("DeferredLightingPass was not prepared.");
     }
     const auto& scene = context.frame().scene();
@@ -292,9 +303,10 @@ void DeferredLightingPass::record(PassRecordContext& context) {
             m_impl->lights.push_back(toGpuLight(light));
         }
     }
-    // 必须排在 ensureBindingSet 之前：扩容会换掉缓冲句柄，绑定集得跟着重建。
-    m_impl->ensureLightBuffer(context.device(), m_impl->lights.size());
-    m_impl->ensureBindingSet(context);
+    auto& slot = m_impl->frame_slots.at(context.frameSlotIndex());
+    // 必须排在 ensureBindingSet 之前：扩容会换掉缓冲句柄，这个 slot 的绑定集得跟着重建。
+    m_impl->ensureLightBuffer(context.device(), slot, m_impl->lights.size());
+    m_impl->ensureBindingSet(context, slot);
 
     LightingConstants constants{};
     const glm::mat4 view_projection = scene.view.projection * scene.view.view;
@@ -328,7 +340,7 @@ void DeferredLightingPass::record(PassRecordContext& context) {
     commands.writeBuffer(m_impl->constants, &constants, sizeof(constants));
     // 只写用到的那一段，缓冲余下的容量保持原样 —— light_count 之外的元素着色器读不到。
     if (!m_impl->lights.empty()) {
-        commands.writeBuffer(m_impl->light_buffer, m_impl->lights.data(),
+        commands.writeBuffer(slot.lights, m_impl->lights.data(),
                 m_impl->lights.size() * sizeof(GpuLight));
     }
 
@@ -340,7 +352,7 @@ void DeferredLightingPass::record(PassRecordContext& context) {
     state.setPipeline(m_impl->pipeline)
             .setFramebuffer(&framebuffer)
             .setViewport(viewport)
-            .addBindingSet(m_impl->binding_set);
+            .addBindingSet(slot.binding_set);
     commands.setGraphicsState(state);
     // 一个覆盖全屏的三角形。不数进 statistics().draw_calls —— 那个数字的意思是「场景里画了
     // 多少个 submesh」，把固定开销的全屏 pass 混进去会让它失去可比性（Tonemap / Present
