@@ -8,6 +8,13 @@ namespace arti::rendering {
 // 延迟光照：一个覆盖全屏的三角形，读 G-Buffer + SceneDepth，把光算出来写进 SceneColor。
 // 整条管线里唯一求值 BRDF 的地方 —— GBuffer 阶段只存材质属性。
 //
+// 光源走一个按需增长的 StructuredBuffer，着色器里逐光源循环，方向光 / 点光 / 聚光三种都在
+// 同一个循环里（类型是每个光源自己的字段，不是三条代码路径）。这是延迟渲染真正的收益：
+// 光源数和几何复杂度解耦，加一个灯的代价是每个**可见像素**多跑一次 BRDF。
+//
+// 没有光源剔除，每个像素遍历全部光源 —— 几个到几十个够用，上百个才需要 tile / cluster 分桶。
+// 那一步加的是循环外面的一层索引，不用改着色本身。
+//
 // 输出目标用 RenderTargetSet::sceneColorFramebuffer()（只挂 SceneColor、不挂深度）：世界坐标
 // 要从深度反投影出来，也就是 SceneDepth 必须当 SRV 采，同一张图不能同时是深度附件
 // —— Vulkan 的 feedback loop。所以「这个像素有没有几何体」是靠采回来的深度自己判断的。

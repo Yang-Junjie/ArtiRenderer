@@ -21,19 +21,40 @@ struct LightingConstants
     // 屏幕像素 -> 世界坐标。反投影的约定和 skybox.slang 一致（投影是 RH_ZO，深度 0..1）。
     float4x4 inverse_view_projection;
     float4 camera_position;
-    // xyz = 从表面指向光源的单位向量。LightDesc::direction 存的是传播方向，CPU 侧已取反。
-    float4 light_direction;
-    // xyz = 颜色，w = 强度
-    float4 light_color;
     float4 ambient_color;
     // x = 环境强度倍率，y = IBL 是否就绪（>0.5 才走 IBL），z = prefiltered 的 mip 数
     float4 environment_params;
     // RenderScene::clear_color。没有几何体覆盖的像素直接输出它。
     float4 background_color;
+    // x = 本帧的光源数量，yzw 未用。用 uint4 而不是塞进某个 float4 的空槽：数量是整数，
+    // 而且 uint4 和 float4 在 cbuffer 里都是 16 字节对齐，混着放不影响打包规则。
+    uint4 light_count;
 };
 
-// 全部走 UBO 而不是 push constant：inverse_view_projection(64) + 六个 float4(96) = 160 字节，
-// 远超 Vulkan 保证的 128。
+// 一个光源。全部 float4，HLSL 和 std430 的打包规则因此一致，两侧不用对 padding 猜谜。
+// CPU 侧的对应物是 deferred_lighting_pass.cpp 里的 GpuLight。
+struct GpuLight
+{
+    // xyz = 世界坐标（方向光不用），w = 影响半径（方向光不用）
+    float4 position_range;
+    // xyz = **光的传播方向**，和 LightDesc::direction 同一个约定 —— 谁需要「从表面指向光源」
+    // 谁自己取反。以前是 CPU 侧先取反再传，那在只有方向光时省事，但聚光的锥轴要的正是传播
+    // 方向，两种含义挤在一个字段里迟早出错。
+    // w = 类型：0 方向光，1 点光，2 聚光。
+    float4 direction_type;
+    // rgb = 颜色，a = 强度
+    float4 color_intensity;
+    // 聚光的角度衰减，CPU 侧从内外锥角预算好：x = scale，y = offset，
+    // saturate(cos * scale + offset) 在内锥以内是 1、外锥以外是 0。zw 未用。
+    float4 cone_scale_offset;
+};
+
+static const uint kLightDirectional = 0;
+static const uint kLightPoint = 1;
+static const uint kLightSpot = 2;
+
+// 全部走 UBO 而不是 push constant：inverse_view_projection(64) + 四个 float4(64) + uint4(16)
+// = 144 字节，远超 Vulkan 保证的 128。
 [[vk::binding(0, 0)]] ConstantBuffer<LightingConstants> lighting_constants;
 [[vk::binding(1, 0)]] Texture2D<float4> g_albedo_metallic;
 [[vk::binding(2, 0)]] Texture2D<float4> g_normal_roughness;
@@ -48,6 +69,10 @@ struct LightingConstants
 [[vk::binding(7, 0)]] TextureCube<float4> prefiltered_cube;
 [[vk::binding(8, 0)]] Texture2D<float4> brdf_lut;
 [[vk::binding(9, 0)]] SamplerState ibl_sampler;
+// 本帧的光源列表。走 StructuredBuffer 而不是 cbuffer 里的定长数组：数量不设上限，
+// 缓冲按需增长（见 deferred_lighting_pass.cpp）。没有光源的帧里它仍然是一个有效的
+// 单元素缓冲 —— 空缓冲建不起 binding set，而 light_count 为 0 时循环一次都不进。
+[[vk::binding(10, 0)]] StructuredBuffer<GpuLight> lights;
 
 static const float kPi = 3.14159265359;
 
@@ -110,6 +135,26 @@ float3 fresnelSchlick(float3 f0, float voh)
     return f0 + (1.0 - f0) * pow(1.0 - voh, 5.0);
 }
 
+// 点光 / 聚光的距离衰减：物理的 1/d²，外面套一个在 range 处平滑归零的窗口。
+//
+// 纯 1/d² 永远不归零，光源就没有影响边界 —— 那样既没法做剔除，面板上改 range 也看不出效果。
+// 窗口取 (1 - (d²/r²)²)² 而不是线性截断：它在 d = r 处值和一阶导都是 0，所以边界上看不到
+// 一圈硬边。这是 Filament 的 getSquareFalloffAttenuation。
+float distanceAttenuation(float distance_squared, float range)
+{
+    const float factor = distance_squared / max(range * range, 1e-4);
+    const float window = saturate(1.0 - factor * factor);
+    return window * window / max(distance_squared, 1e-4);
+}
+
+// 聚光的角度衰减。scale / offset 由 CPU 从内外锥角算好（见 deferred_lighting_pass.cpp），
+// 所以这里只剩一次 mad + saturate。再平方一下让边缘过渡更柔和 —— 线性的看得出来是一圈直边。
+float coneAttenuation(float cosine, float2 scale_offset)
+{
+    const float attenuation = saturate(cosine * scale_offset.x + scale_offset.y);
+    return attenuation * attenuation;
+}
+
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target
 {
@@ -137,11 +182,9 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     const float3 world_position = reconstructWorldPosition(input.uv, depth);
     const float3 view_direction =
             normalize(lighting_constants.camera_position.xyz - world_position);
-    const float3 light_direction = normalize(lighting_constants.light_direction.xyz);
     // nov 不能为 0：可见性项的分母里两个 lambda 都带它，同时为 0 会让镜面项炸到上限；
-    // 它也是 DFG LUT 的采样坐标。
+    // 它也是 DFG LUT 的采样坐标。逐光源的 nol 在下面的循环里算。
     const float nov = max(dot(normal, view_direction), 1e-4);
-    const float nol = max(dot(normal, light_direction), 0.0);
     // 介质的垂直反射率固定 0.04，金属用自己的 albedo 当 F0 —— metallic 工作流的全部内容。
     const float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
     const float alpha = roughness * roughness;
@@ -170,9 +213,46 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     const float3 energy_compensation =
             single_scatter > 0.0 ? 1.0 + f0 * (1.0 / single_scatter - 1.0) : float3(1.0, 1.0, 1.0);
 
+    // 直接光：把每个光源的贡献累加起来。延迟管线的收益就在这个循环里 —— 光源数和几何复杂度
+    // 解耦了，加一个灯的代价是每个**可见像素**多跑一次 BRDF，而不是每个片元多跑一遍整条管线。
+    //
+    // 没有剔除：每个像素都要遍历全部光源。几个到几十个灯是够的，上百个才需要 tile / cluster
+    // 把光源按屏幕区域分桶 —— 那一步要的是这个循环之前多一层索引，不用改这里的着色。
     float3 direct = float3(0.0, 0.0, 0.0);
-    if (nol > 0.0)
+    for (uint index = 0; index < lighting_constants.light_count.x; ++index)
     {
+        const GpuLight light = lights[index];
+        const uint type = uint(light.direction_type.w);
+
+        // 从表面指向光源的单位向量 + 这个光源在这一点的衰减。
+        float3 light_direction;
+        float attenuation = 1.0;
+        if (type == kLightDirectional)
+        {
+            // 方向光没有位置、不衰减。存的是传播方向，所以取反。
+            light_direction = -light.direction_type.xyz;
+        }
+        else
+        {
+            const float3 to_light = light.position_range.xyz - world_position;
+            const float distance_squared = dot(to_light, to_light);
+            light_direction = to_light * rsqrt(max(distance_squared, 1e-8));
+            attenuation = distanceAttenuation(distance_squared, light.position_range.w);
+            if (type == kLightSpot)
+            {
+                // 锥轴就是传播方向，和「从表面指向光源」正好反向，所以这里取反再点乘。
+                attenuation *= coneAttenuation(dot(light.direction_type.xyz, -light_direction),
+                        light.cone_scale_offset.xy);
+            }
+        }
+
+        const float nol = max(dot(normal, light_direction), 0.0);
+        // 衰减到 0（超出 range 或在锥外）和背面朝光都没有贡献。提前跳掉省的是下面整段 BRDF。
+        if (attenuation <= 0.0 || nol <= 0.0)
+        {
+            continue;
+        }
+
         const float3 half_direction = normalize(view_direction + light_direction);
         const float noh = max(dot(normal, half_direction), 0.0);
         const float voh = max(dot(view_direction, half_direction), 0.0);
@@ -183,9 +263,8 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         // 金属没有漫反射；(1 - fresnel) 是能量守恒 —— 反射掉的那部分不再进入次表面。
         const float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / kPi;
 
-        const float3 radiance =
-                lighting_constants.light_color.rgb * lighting_constants.light_color.w;
-        direct = (diffuse + specular) * radiance * nol;
+        const float3 radiance = light.color_intensity.rgb * light.color_intensity.a;
+        direct += (diffuse + specular) * radiance * nol * attenuation;
     }
 
     // 环境项。有 IBL 就走 split-sum，没有就退回常数环境光。
