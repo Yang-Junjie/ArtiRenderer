@@ -12,6 +12,7 @@ add_library(artirenderer STATIC
     src/pipeline/gbuffer_targets.cpp
     src/pipeline/render_target_set.cpp
     src/pipeline/passes/clear_scene_pass.cpp
+    src/pipeline/passes/debug_line_pass.cpp
     src/pipeline/passes/deferred_lighting_pass.cpp
     src/pipeline/passes/draw_resolve.cpp
     src/pipeline/passes/environment_bake_pass.cpp
@@ -58,6 +59,7 @@ target_link_libraries(artirenderer
 set_target_properties(artirenderer PROPERTIES FOLDER "ArtiRenderer")
 
 set(ARTIRENDERER_SHADERS
+    src/shaders/debug_line.slang
     src/shaders/gbuffer.slang
     src/shaders/deferred_lighting.slang
     src/shaders/ibl_common.slang

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "debug_draw.h"
 #include "frame_overlay.h"
 #include "handle.h"
 #include "material.h"
@@ -99,6 +100,21 @@ public:
     //
     // picking_id 是 DrawItem 里填的那个值；0 表示点在空处。
     std::optional<PickResult> takePickResult() noexcept;
+
+    // 调试绘制。和 requestPick() 一样是「攒到下一帧」的形状：这些线只画紧接着的那一帧，
+    // renderFrame() 消费完就清空，调用方不用管生命周期，也不用把一个列表层层传下来。
+    //
+    // 线画在 tone mapping 之后的显示层上，所以 color 写什么就看到什么（见 DebugLine）。
+    // 深度测试是开的：被场景里的物体挡住的线看不见 —— 线在世界里是有位置的。
+    void drawLine(const glm::vec3& from, const glm::vec3& to, const glm::vec4& color);
+
+    // 线框盒。12 条边，bounds 是世界空间的 —— 局部包围盒用 AABB::transformed() 转过来。
+    void drawAABB(const AABB& bounds, const glm::vec4& color);
+
+    // 三个正交大圆拼出来的线框球。点光源的 range 就靠它看。
+    // segments 是每个圆的分段数，24 段在常见距离上已经看不出棱角。
+    void drawWireSphere(const glm::vec3& center, float radius, const glm::vec4& color,
+            uint32_t segments = 24);
 
     RenderOutputInfo outputInfo() const noexcept;
     void waitIdle() const;

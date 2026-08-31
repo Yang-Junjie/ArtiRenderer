@@ -54,6 +54,10 @@ public:
     nvrhi::ITexture& displayColor() const;
     nvrhi::IFramebuffer& displayFramebuffer() const;
 
+    // DisplayColor + SceneDepth。DebugLinePass 要的是这个：它画在显示层上，但要拿场景的深度
+    // 做遮挡测试。displayFramebuffer() 不挂深度 —— TonemapPass 是全屏三角形，没有可见性可言。
+    nvrhi::IFramebuffer& displayDepthFramebuffer() const;
+
     nvrhi::IFramebuffer& outputFramebuffer() const;
 
 private:
@@ -63,6 +67,7 @@ private:
     nvrhi::FramebufferHandle m_scene_color_framebuffer;
     nvrhi::TextureHandle m_display_color;
     nvrhi::FramebufferHandle m_display_framebuffer;
+    nvrhi::FramebufferHandle m_display_depth_framebuffer;
     nvrhi::IFramebuffer* m_output_framebuffer{ nullptr };
     uint32_t m_width{ 0 };
     uint32_t m_height{ 0 };

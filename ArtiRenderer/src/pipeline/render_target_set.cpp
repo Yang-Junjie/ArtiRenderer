@@ -99,10 +99,19 @@ void RenderTargetSet::prepare(nvrhi::IDevice& device, nvrhi::IFramebuffer& outpu
         throw std::runtime_error("NVRHI failed to create the display framebuffer.");
     }
 
+    // 同一张 DisplayColor，但挂上场景深度：DebugLinePass 画在显示层上，遮挡关系要按场景走。
+    nvrhi::FramebufferDesc display_depth_desc;
+    display_depth_desc.addColorAttachment(m_display_color).setDepthAttachment(m_scene_depth);
+    m_display_depth_framebuffer = device.createFramebuffer(display_depth_desc);
+    if (!m_display_depth_framebuffer) {
+        throw std::runtime_error("NVRHI failed to create the display depth framebuffer.");
+    }
+
     m_width = width;
     m_height = height;
     ++m_revision;
-    getLogChannel().debug("Scene targets resized to {}x{} (revision {})", width, height, m_revision);
+    getLogChannel().debug("Scene targets resized to {}x{} (revision {})", width, height,
+            m_revision);
 }
 
 nvrhi::ITexture& RenderTargetSet::sceneColor() const {
@@ -145,6 +154,13 @@ nvrhi::IFramebuffer& RenderTargetSet::displayFramebuffer() const {
         throw std::logic_error("RenderTargetSet::displayFramebuffer() before prepare().");
     }
     return *m_display_framebuffer;
+}
+
+nvrhi::IFramebuffer& RenderTargetSet::displayDepthFramebuffer() const {
+    if (!m_display_depth_framebuffer) {
+        throw std::logic_error("RenderTargetSet::displayDepthFramebuffer() before prepare().");
+    }
+    return *m_display_depth_framebuffer;
 }
 
 nvrhi::IFramebuffer& RenderTargetSet::outputFramebuffer() const {

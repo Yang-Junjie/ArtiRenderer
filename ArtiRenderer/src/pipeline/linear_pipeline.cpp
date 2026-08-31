@@ -3,6 +3,7 @@
 #include "artichoco/renderer/render_device.h"
 #include "log.h"
 #include "passes/clear_scene_pass.h"
+#include "passes/debug_line_pass.h"
 #include "passes/deferred_lighting_pass.h"
 #include "passes/environment_bake_pass.h"
 #include "passes/gbuffer_pass.h"
@@ -119,13 +120,16 @@ std::unique_ptr<Pipeline> createDeferredPipeline(arti::renderer::RenderDevice& d
     // 常驻启用：SceneColor 是 HDR，从这里开始下游看到的都是压好的 DisplayColor。
     // 两条呈现路径（PresentPass 贴 backbuffer / ImGui 采纹理）因此看到同一个画面。
     pipeline->addPass(LinearStage::PostProcess, std::make_unique<TonemapPass>());
+    // 常驻安装但按需生效：没有调试线的帧 isEnabled() 是 false，连 shader 都不编译。
+    // 排在 Tonemap 之后，所以线的颜色不受曝光和 tone 曲线影响。
+    pipeline->addPass(LinearStage::DebugOverlay, std::make_unique<DebugLinePass>());
     pipeline->addPass(LinearStage::Output, std::make_unique<PresentPass>());
     // 常驻安装，但没有 draw data 的帧里 isEnabled() 是 false —— 不用 UI 的运行时不付代价，
     // 也不用为了开关 UI 去换一条管线。
     pipeline->addPass(LinearStage::UI, std::make_unique<ImGuiPass>());
 
     getLogChannel().info("Created deferred pipeline (Bake -> Clear -> GBuffer -> Lighting -> "
-                         "Sky -> Tonemap -> Output -> UI)");
+                         "Sky -> Tonemap -> Debug -> Output -> UI)");
     return pipeline;
 }
 

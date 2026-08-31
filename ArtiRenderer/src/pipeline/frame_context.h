@@ -6,6 +6,7 @@
 #include "resource_registry.h"
 
 #include <optional>
+#include <span>
 
 namespace arti::rendering {
 
@@ -21,6 +22,10 @@ struct FrameSettings {
     // 这一帧要不要拾取。为空时 PickingPass 整个跳过 —— 连 ID 缓冲都不会建，
     // 所以不用拾取的运行时零成本。
     std::optional<PickRequest> pick;
+    // 这一帧的调试线。借的是 Renderer 里那个累积用的 vector，生命周期到 renderFrame 结束 ——
+    // 和 pick 同一个形状（Renderer 上攒着、每帧快照进来），所以放在这里而不是 RenderScene：
+    // 调试线不是场景内容。空的时候 DebugLinePass 整个跳过。
+    std::span<const DebugLine> debug_lines;
 };
 
 // 一帧里所有 pass 共享的东西。Renderer 每帧构造一次，pass 不持有它。

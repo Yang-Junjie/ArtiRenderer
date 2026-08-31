@@ -32,6 +32,11 @@ enum class LinearStage : uint8_t {
     // 必须排在 Lighting / Sky 之后（要读完整的场景）、Output 之前（PresentPass 贴的是
     // DisplayColor）。
     PostProcess,
+    // 调试绘制：画在 DisplayColor 上（tone mapping **之后**），深度测试复用 SceneDepth。
+    // 排在 PostProcess 之后是刻意的 —— 调试线的颜色不该被曝光和 tone 曲线改掉，
+    // 「我给的颜色就是我看到的颜色」是它的全部意义。排在 Output 之前，所以两条呈现路径
+    // （PresentPass 贴 backbuffer / ImGui 采纹理）看到的都是带调试线的画面。
+    DebugOverlay,
     Output,
     // UI 排在 Output 之后，直接画进 backbuffer 而不是 SceneColor：UI 因此永远是原生分辨率，
     // 也不受场景侧后处理（tone mapping、缩放渲染）的影响。代价是 UI 不参与那些变换 ——
@@ -56,6 +61,8 @@ constexpr const char* linearStageName(LinearStage stage) noexcept {
             return "Picking";
         case LinearStage::PostProcess:
             return "PostProcess";
+        case LinearStage::DebugOverlay:
+            return "DebugOverlay";
         case LinearStage::Output:
             return "Output";
         case LinearStage::UI:
