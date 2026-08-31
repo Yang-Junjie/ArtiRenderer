@@ -26,7 +26,7 @@ std::optional<ResolvedDraw> resolveDraw(const FrameContext& frame, const DrawIte
     ResolvedDraw resolved;
     resolved.mesh = mesh;
     resolved.submesh = &submesh;
-    // 材质缺失时用默认材质（白色 unlit）。
+    // 材质缺失时用默认材质（白色全粗糙的介质），不要因为材质丢了就丢掉几何体。
     if (const auto* material = frame.resources().findMaterial(draw.material)) {
         resolved.material = *material;
     }

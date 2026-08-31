@@ -22,7 +22,9 @@ namespace arti::rendering {
 
 
 enum class PipelineKind : uint8_t {
-    Forward = 0,
+    // 延迟渲染。几何写 G-Buffer，光照在一个全屏 pass 里一次算完。
+    // 目前只有这一条 —— 前向管线已经整条移除，不留双路径。
+    Deferred = 0,
 };
 
 // 场景最终怎么到屏幕上。
@@ -35,7 +37,7 @@ enum class PresentMode : uint8_t {
 };
 
 struct RendererCreateInfo {
-    PipelineKind pipeline{ PipelineKind::Forward };
+    PipelineKind pipeline{ PipelineKind::Deferred };
     PresentMode present{ PresentMode::Direct };
 };
 

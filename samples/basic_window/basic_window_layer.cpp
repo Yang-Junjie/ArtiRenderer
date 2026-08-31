@@ -17,7 +17,7 @@ namespace arti::sample {
 namespace {
 
 // 立方体：每个面 4 个顶点，方便给独立的法线和 UV。
-// 三角形按「从外面看逆时针」编写，与 ForwardOpaquePass 的正面约定一致。
+// 三角形按「从外面看逆时针」编写，与 GBufferPass 的正面约定一致。
 rendering::Mesh makeCubeMesh()
 {
     struct FaceDesc {
@@ -153,13 +153,12 @@ void BasicWindowLayer::createSceneResources()
     m_checker_texture = m_renderer->createTexture(texture_desc);
 
     rendering::Material material;
-    material.type = rendering::MaterialType::BlinnPhong;
+    // 管线只有 metallic-roughness 一种着色模型，所以不用设 type（默认就是 PBR）。
     material.base_color = glm::vec4{ 1.0f, 0.85f, 0.7f, 1.0f };
     material.base_color_texture = m_checker_texture;
-    // 32 大致是塑料的高光锐度；strength 压到 0.6 以免棋盘的亮格被高光冲掉。
-    material.specular_color = glm::vec3{ 1.0f, 1.0f, 1.0f };
-    material.specular_strength = 0.6f;
-    material.shininess = 32.0f;
+    // 介质 + 半光泽：0.5 的 roughness 高光够宽，不会把棋盘的亮格冲掉。
+    material.metallic_strength = 0.0f;
+    material.roughness_strength = 0.5f;
     m_cube_material = m_renderer->createMaterial(material);
 
     m_cube_mesh = m_renderer->createMesh(makeCubeMesh(), "Sample cube");
@@ -312,7 +311,7 @@ void BasicWindowLayer::onRender()
     scene.view.projection = glm::perspectiveRH_ZO(glm::radians(60.0f), aspect, 0.1f, 100.0f);
 
     // 方向光。direction 是光的传播方向（从光源射出），不是从表面指向光源 ——
-    // ForwardOpaquePass 会取反。这里让光从右上前方斜射下来，立方体转动时能看出高光在游走。
+    // DeferredLightingPass 会取反。这里让光从右上前方斜射下来，立方体转动时能看出高光在游走。
     rendering::LightDesc sun;
     sun.type = rendering::LightType::Directional;
     sun.direction = glm::normalize(glm::vec3{ -0.5f, -1.0f, -0.35f });

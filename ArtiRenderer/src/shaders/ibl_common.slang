@@ -48,7 +48,7 @@ float3 directionFromFace(uint face, float2 uv)
     return normalize(float3(-uv.x, -uv.y, -1.0));
 }
 
-// GGX / Trowbridge-Reitz。和 forward_pbr.slang 里那份是同一个公式 —— 这里是采样 pdf 要用。
+// GGX / Trowbridge-Reitz。和 deferred_lighting.slang 里那份是同一个公式 —— 这里是采样 pdf 要用。
 float distributionGGX(float ndot_h, float roughness)
 {
     const float a = roughness * roughness;

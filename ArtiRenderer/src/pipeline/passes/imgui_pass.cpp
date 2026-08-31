@@ -94,7 +94,7 @@ struct ImGuiPass::Impl {
     nvrhi::FramebufferInfo pipeline_framebuffer_info;
 
     // TextureHandle -> binding set。注册表里的 UI 纹理不是渲染目标，不会因为 backbuffer 换了而
-    // 失效，所以可以跨帧缓存 —— 和 UnlitOpaquePass 同一个套路。
+    // 失效，所以可以跨帧缓存。
     std::unordered_map<TextureHandle, nvrhi::BindingSetHandle> binding_sets;
 
     // SceneColor 单独存：它是渲染目标，缩放时会重建，所以要跟着 RenderTargetSet 的 revision 失效。

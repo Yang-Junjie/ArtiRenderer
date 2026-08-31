@@ -77,6 +77,15 @@ void RenderTargetSet::prepare(nvrhi::IDevice& device, nvrhi::IFramebuffer& outpu
         throw std::runtime_error("NVRHI failed to create the scene framebuffer.");
     }
 
+    // 只有 SceneColor 的 framebuffer，给 DeferredLightingPass 用：它把 SceneDepth 当 SRV 采，
+    // 所以不能把同一张深度图挂成附件。
+    nvrhi::FramebufferDesc scene_color_desc;
+    scene_color_desc.addColorAttachment(m_scene_color);
+    m_scene_color_framebuffer = device.createFramebuffer(scene_color_desc);
+    if (!m_scene_color_framebuffer) {
+        throw std::runtime_error("NVRHI failed to create the scene color framebuffer.");
+    }
+
     // 显示层不带深度：TonemapPass 是一个覆盖全屏的三角形，没有可见性可言。
     m_display_color = device.createTexture(
             makeColorDesc(width, height, displayColorFormat, "ArtiRenderer DisplayColor"));
@@ -115,6 +124,13 @@ nvrhi::IFramebuffer& RenderTargetSet::sceneFramebuffer() const {
         throw std::logic_error("RenderTargetSet::sceneFramebuffer() before prepare().");
     }
     return *m_scene_framebuffer;
+}
+
+nvrhi::IFramebuffer& RenderTargetSet::sceneColorFramebuffer() const {
+    if (!m_scene_color_framebuffer) {
+        throw std::logic_error("RenderTargetSet::sceneColorFramebuffer() before prepare().");
+    }
+    return *m_scene_color_framebuffer;
 }
 
 nvrhi::ITexture& RenderTargetSet::displayColor() const {

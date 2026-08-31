@@ -17,7 +17,7 @@ namespace arti::rendering {
 // 所以不会 stall GPU 等自己刚提交的活）。因此 picking_id 必须跨帧稳定 ——
 // 逐帧重编号的话结果回来时编号表已经变了。这个约束由调用方保证，见 DrawItem::picking_id。
 //
-// 深度复用 Opaque 阶段写好的那张，LessOrEqual 且不写入，所以被遮挡的片元不会写 ID。
+// 深度复用 GBuffer 阶段写好的那张，LessOrEqual 且不写入，所以被遮挡的片元不会写 ID。
 class PickingPass final : public LinearPass {
 public:
     PickingPass();

@@ -16,11 +16,12 @@ const detail::GPUMesh& requireMesh(const FrameContext& frame, MeshHandle handle)
 } // namespace
 
 PassPrepareContext::PassPrepareContext(arti::renderer::RenderPassPrepareContext& rhi,
-        FrameContext& frame, RenderTargetSet& targets,
+        FrameContext& frame, RenderTargetSet& targets, GBufferTargets& gbuffer,
         EnvironmentResources& environment) noexcept
         : m_rhi(&rhi),
           m_frame(&frame),
           m_targets(&targets),
+          m_gbuffer(&gbuffer),
           m_environment(&environment) {}
 
 nvrhi::IDevice& PassPrepareContext::device() const noexcept { return m_rhi->device(); }
@@ -31,13 +32,17 @@ FrameContext& PassPrepareContext::frame() const noexcept { return *m_frame; }
 
 RenderTargetSet& PassPrepareContext::targets() const noexcept { return *m_targets; }
 
+GBufferTargets& PassPrepareContext::gbuffer() const noexcept { return *m_gbuffer; }
+
 EnvironmentResources& PassPrepareContext::environment() const noexcept { return *m_environment; }
 
 PassRecordContext::PassRecordContext(arti::renderer::RenderPassContext& rhi, FrameContext& frame,
-        RenderTargetSet& targets, EnvironmentResources& environment) noexcept
+        RenderTargetSet& targets, GBufferTargets& gbuffer,
+        EnvironmentResources& environment) noexcept
         : m_rhi(&rhi),
           m_frame(&frame),
           m_targets(&targets),
+          m_gbuffer(&gbuffer),
           m_environment(&environment) {}
 
 nvrhi::IDevice& PassRecordContext::device() const noexcept { return m_rhi->device(); }
@@ -51,6 +56,8 @@ nvrhi::ITexture& PassRecordContext::outputColor() const noexcept { return m_rhi-
 FrameContext& PassRecordContext::frame() const noexcept { return *m_frame; }
 
 RenderTargetSet& PassRecordContext::targets() const noexcept { return *m_targets; }
+
+GBufferTargets& PassRecordContext::gbuffer() const noexcept { return *m_gbuffer; }
 
 EnvironmentResources& PassRecordContext::environment() const noexcept { return *m_environment; }
 

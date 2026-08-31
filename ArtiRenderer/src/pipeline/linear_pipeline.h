@@ -1,6 +1,7 @@
 #pragma once
 #include "artichoco/renderer/render_pass.h"
 #include "environment_resources.h"
+#include "gbuffer_targets.h"
 #include "linear_pass.h"
 #include "linear_stage.h"
 #include "pipeline.h"
@@ -36,7 +37,7 @@ public:
 
 private:
     struct Entry {
-        LinearStage stage{ LinearStage::Opaque };
+        LinearStage stage{ LinearStage::GBuffer };
         std::unique_ptr<LinearPass> pass;
         // "<stage> / <pass name>"，addPass 时算好，录制时零分配。
         std::string marker_label;
@@ -45,7 +46,10 @@ private:
     arti::renderer::RenderDevice* m_device{ nullptr };
     std::vector<Entry> m_passes;
     RenderTargetSet m_targets;
-    // 由管线拥有、跨 pass 共享，和 m_targets 同一个角色：EnvironmentBakePass 写，下游读。
+    // 和 m_targets 同一个角色，都是管线拥有、跨 pass 共享的具名资源。
+    // G-Buffer 阶段的 pass 写 m_gbuffer，DeferredLightingPass 读；EnvironmentBakePass 写
+    // m_environment，光照和天空读。
+    GBufferTargets m_gbuffer;
     EnvironmentResources m_environment;
     // 借用指针，所有权在 m_passes 里。装配时记下来，省得每次取结果都去遍历找。
     PickingPass* m_picking_pass{ nullptr };

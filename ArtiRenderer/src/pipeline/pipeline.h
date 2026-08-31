@@ -27,6 +27,6 @@ public:
     virtual PickingPass* pickingPass() noexcept { return nullptr; }
 };
 
-std::unique_ptr<Pipeline> createForwardPipeline(arti::renderer::RenderDevice& device);
+std::unique_ptr<Pipeline> createDeferredPipeline(arti::renderer::RenderDevice& device);
 
 } // namespace arti::rendering

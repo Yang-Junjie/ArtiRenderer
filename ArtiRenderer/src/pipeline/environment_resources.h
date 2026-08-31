@@ -6,12 +6,12 @@
 
 namespace arti::rendering {
 
-// IBL 的烘焙产物，由 EnvironmentBakePass 写、PbrOpaquePass 和 SkyPass 读。
+// IBL 的烘焙产物，由 EnvironmentBakePass 写、DeferredLightingPass 和 SkyPass 读。
 //
 // 为什么不塞进 RenderTargetSet：那个类的名字承载的是色彩空间契约（scene 线性 / display 线性 /
 // backbuffer），而且它刻意不是泛型 slot 机制。这几张图不是 render target，是 compute 的产物。
 // 所以照 RenderTargetSet 解决「pass 之间怎么交接资源」的形状，另起一个同样具名的结构 ——
-// pass 依然互不认识，顺序由 LinearStage 表达（EnvironmentBake < Opaque，装错在 addPass 就抛）。
+// pass 依然互不认识，顺序由 LinearStage 表达（EnvironmentBake < Lighting，装错在 addPass 就抛）。
 struct EnvironmentResources {
     // 等距柱状源图烘出来的全景 cube，带完整 mip 链。天空直接采它，prefilter 也拿它当输入。
     nvrhi::TextureHandle environment;

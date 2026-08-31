@@ -9,18 +9,18 @@ add_library(artirenderer STATIC
     src/pipeline/frame_context.cpp
     src/pipeline/linear_pass.cpp
     src/pipeline/linear_pipeline.cpp
+    src/pipeline/gbuffer_targets.cpp
     src/pipeline/render_target_set.cpp
-    src/pipeline/passes/blinn_phong_opaque_pass.cpp
     src/pipeline/passes/clear_scene_pass.cpp
+    src/pipeline/passes/deferred_lighting_pass.cpp
     src/pipeline/passes/draw_resolve.cpp
     src/pipeline/passes/environment_bake_pass.cpp
+    src/pipeline/passes/gbuffer_pass.cpp
     src/pipeline/passes/imgui_pass.cpp
-    src/pipeline/passes/pbr_opaque_pass.cpp
     src/pipeline/passes/picking_pass.cpp
     src/pipeline/passes/present_pass.cpp
     src/pipeline/passes/sky_pass.cpp
     src/pipeline/passes/tonemap_pass.cpp
-    src/pipeline/passes/unlit_opaque_pass.cpp
 )
 add_library(ArtiRenderer::Renderer ALIAS artirenderer)
 
@@ -58,9 +58,8 @@ target_link_libraries(artirenderer
 set_target_properties(artirenderer PROPERTIES FOLDER "ArtiRenderer")
 
 set(ARTIRENDERER_SHADERS
-    src/shaders/forward_unlit.slang
-    src/shaders/forward_blinn_phong.slang
-    src/shaders/forward_pbr.slang
+    src/shaders/gbuffer.slang
+    src/shaders/deferred_lighting.slang
     src/shaders/ibl_common.slang
     src/shaders/equirect_to_cube.slang
     src/shaders/irradiance.slang

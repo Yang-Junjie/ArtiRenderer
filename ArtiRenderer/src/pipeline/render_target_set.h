@@ -47,6 +47,10 @@ public:
     nvrhi::ITexture& sceneDepth() const;
     nvrhi::IFramebuffer& sceneFramebuffer() const;
 
+    // 只挂 SceneColor、不挂深度。DeferredLightingPass 要的是这个：它把 SceneDepth 当 SRV 采
+    // （从深度反投影出世界坐标），同一张图不能同时是深度附件 —— Vulkan 的 feedback loop。
+    nvrhi::IFramebuffer& sceneColorFramebuffer() const;
+
     nvrhi::ITexture& displayColor() const;
     nvrhi::IFramebuffer& displayFramebuffer() const;
 
@@ -56,6 +60,7 @@ private:
     nvrhi::TextureHandle m_scene_color;
     nvrhi::TextureHandle m_scene_depth;
     nvrhi::FramebufferHandle m_scene_framebuffer;
+    nvrhi::FramebufferHandle m_scene_color_framebuffer;
     nvrhi::TextureHandle m_display_color;
     nvrhi::FramebufferHandle m_display_framebuffer;
     nvrhi::IFramebuffer* m_output_framebuffer{ nullptr };

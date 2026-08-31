@@ -2,6 +2,7 @@
 #include "artichoco/renderer/render_pass.h"
 #include "environment_resources.h"
 #include "frame_context.h"
+#include "gbuffer_targets.h"
 #include "render_target_set.h"
 
 #include <cstddef>
@@ -13,7 +14,8 @@ namespace arti::rendering {
 class PassPrepareContext {
 public:
     PassPrepareContext(arti::renderer::RenderPassPrepareContext& rhi, FrameContext& frame,
-            RenderTargetSet& targets, EnvironmentResources& environment) noexcept;
+            RenderTargetSet& targets, GBufferTargets& gbuffer,
+            EnvironmentResources& environment) noexcept;
 
     nvrhi::IDevice& device() const noexcept;
 
@@ -23,6 +25,8 @@ public:
     FrameContext& frame() const noexcept;
     // 目标已经由管线建好了，pass 直接用。想知道尺寸就问它要 framebuffer info。
     RenderTargetSet& targets() const noexcept;
+    // G-Buffer。GBuffer 阶段的 pass 写，DeferredLightingPass 读。
+    GBufferTargets& gbuffer() const noexcept;
     // IBL 的烘焙产物。EnvironmentBakePass 写，下游读。
     EnvironmentResources& environment() const noexcept;
 
@@ -30,6 +34,7 @@ private:
     arti::renderer::RenderPassPrepareContext* m_rhi{ nullptr };
     FrameContext* m_frame{ nullptr };
     RenderTargetSet* m_targets{ nullptr };
+    GBufferTargets* m_gbuffer{ nullptr };
     EnvironmentResources* m_environment{ nullptr };
 };
 
@@ -37,7 +42,8 @@ private:
 class PassRecordContext {
 public:
     PassRecordContext(arti::renderer::RenderPassContext& rhi, FrameContext& frame,
-            RenderTargetSet& targets, EnvironmentResources& environment) noexcept;
+            RenderTargetSet& targets, GBufferTargets& gbuffer,
+            EnvironmentResources& environment) noexcept;
 
     nvrhi::IDevice& device() const noexcept;
     nvrhi::ICommandList& commands() const noexcept;
@@ -50,6 +56,7 @@ public:
 
     FrameContext& frame() const noexcept;
     RenderTargetSet& targets() const noexcept;
+    GBufferTargets& gbuffer() const noexcept;
     EnvironmentResources& environment() const noexcept;
 
     nvrhi::IBuffer& vertexBuffer(MeshHandle mesh) const;
@@ -60,6 +67,7 @@ private:
     arti::renderer::RenderPassContext* m_rhi{ nullptr };
     FrameContext* m_frame{ nullptr };
     RenderTargetSet* m_targets{ nullptr };
+    GBufferTargets* m_gbuffer{ nullptr };
     EnvironmentResources* m_environment{ nullptr };
 };
 

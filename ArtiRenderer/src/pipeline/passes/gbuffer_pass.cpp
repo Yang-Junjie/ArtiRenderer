@@ -1,4 +1,4 @@
-#include "pbr_opaque_pass.h"
+#include "gbuffer_pass.h"
 
 #include "artichoco/renderer/slang_compiler.h"
 #include "artichoco/renderer/vulkan/nvrhi_shader_factory.h"
@@ -12,7 +12,6 @@
 #include <cstring>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <limits>
 #include <stdexcept>
 #include <type_traits>
 #include <unordered_map>
@@ -26,52 +25,36 @@ namespace {
 // 传法线矩阵而不是让着色器用 model 的左上 3x3：TransformComponent 允许非等比缩放，那种情况下
 // 后者是错的。材质参数因此挤不进 push constant，改走逐材质的 uniform buffer —— 反正它是按材质
 // 而不是按 draw 变的，放进 push constant 本来就是浪费。
-struct PbrDrawConstants {
+struct GBufferDrawConstants {
     std::array<float, 16> model;
     std::array<float, 4> normal_row0;
     std::array<float, 4> normal_row1;
     std::array<float, 4> normal_row2;
 };
 
-static_assert(std::is_standard_layout_v<PbrDrawConstants>);
-static_assert(sizeof(PbrDrawConstants) == sizeof(float) * 28);
-static_assert(sizeof(PbrDrawConstants) <= 128,
+static_assert(std::is_standard_layout_v<GBufferDrawConstants>);
+static_assert(sizeof(GBufferDrawConstants) == sizeof(float) * 28);
+static_assert(sizeof(GBufferDrawConstants) <= 128,
         "Vulkan only guarantees 128 push constant bytes.");
 
-// 逐帧常量。全部 float4 / float4x4，HLSL 与 std140 的打包规则因此一致，两侧不用对 padding 猜谜。
-struct PbrFrameConstants {
+// 逐帧常量。延迟管线下几何 pass 只需要相机矩阵 —— 光源、环境光、IBL 全在光照 pass 那边，
+// 所以这个 struct 只剩一个矩阵。
+struct GBufferFrameConstants {
     std::array<float, 16> view_projection;
-    std::array<float, 4> camera_position;
-    std::array<float, 4> light_direction;
-    std::array<float, 4> light_color;
-    std::array<float, 4> ambient_color;
-    // x = 环境强度，y = IBL 是否就绪，z = prefiltered mip 数，w 未用
-    std::array<float, 4> environment_params;
 };
 
-static_assert(std::is_standard_layout_v<PbrFrameConstants>);
-static_assert(sizeof(PbrFrameConstants) == sizeof(float) * 36);
+static_assert(std::is_standard_layout_v<GBufferFrameConstants>);
+static_assert(sizeof(GBufferFrameConstants) == sizeof(float) * 16);
 
-// 逐材质常量。
-struct PbrMaterialConstants {
+// 逐材质常量。全部 float4，HLSL 与 std140 的打包规则因此一致，两侧不用对 padding 猜谜。
+struct GBufferMaterialConstants {
     std::array<float, 4> base_color;
     // x = metallic, y = roughness, z = occlusion 强度, w = emissive 强度
     std::array<float, 4> factors;
 };
 
-static_assert(std::is_standard_layout_v<PbrMaterialConstants>);
-static_assert(sizeof(PbrMaterialConstants) == sizeof(float) * 8);
-
-// 场景里第一个启用的方向光。没有就返回 nullptr，此时只剩环境光。
-const LightDesc* findDirectionalLight(const RenderScene& scene)
-{
-    for (const auto& light: scene.lights) {
-        if (light.enabled && light.type == LightType::Directional) {
-            return &light;
-        }
-    }
-    return nullptr;
-}
+static_assert(std::is_standard_layout_v<GBufferMaterialConstants>);
+static_assert(sizeof(GBufferMaterialConstants) == sizeof(float) * 8);
 
 // 材质引用的五张贴图。绑定集按 MaterialHandle 缓存，而 updateMaterial() 可以换掉贴图，
 // 所以要记下建集时用的那一组，变了就重建 —— 只比句柄，不碰 GPU 资源。
@@ -85,8 +68,7 @@ struct MaterialTextures {
     bool operator==(const MaterialTextures&) const = default;
 };
 
-MaterialTextures texturesOf(const Material& material, TextureHandle flat_normal)
-{
+MaterialTextures texturesOf(const Material& material, TextureHandle flat_normal) {
     MaterialTextures textures;
     textures.base_color = material.base_color_texture;
     textures.metallic_roughness = material.metallic_roughness_texture;
@@ -98,9 +80,8 @@ MaterialTextures texturesOf(const Material& material, TextureHandle flat_normal)
     return textures;
 }
 
-PbrMaterialConstants constantsOf(const Material& material)
-{
-    PbrMaterialConstants constants{};
+GBufferMaterialConstants constantsOf(const Material& material) {
+    GBufferMaterialConstants constants{};
     std::memcpy(constants.base_color.data(), glm::value_ptr(material.base_color),
             sizeof(constants.base_color));
     constants.factors = { material.metallic_strength, material.roughness_strength,
@@ -110,7 +91,7 @@ PbrMaterialConstants constantsOf(const Material& material)
 
 } // namespace
 
-struct PbrOpaquePass::Impl {
+struct GBufferPass::Impl {
     arti::renderer::ShaderReflection reflection;
     nvrhi::ShaderHandle vertex_shader;
     nvrhi::ShaderHandle pixel_shader;
@@ -131,74 +112,48 @@ struct PbrOpaquePass::Impl {
     };
     std::unordered_map<MaterialHandle, MaterialResources> materials;
 
-    // 绑定集里既有逐材质的贴图，也有逐帧的 IBL 三件套。后者换了（环境重烘）就得整批重建，
-    // 所以记一份 revision 在这里，而不是塞进每个 MaterialResources 里各存一份。
-    uint64_t environment_revision{ std::numeric_limits<uint64_t>::max() };
-
-    void invalidateIfEnvironmentChanged(const EnvironmentResources& environment)
-    {
-        if (environment_revision == environment.revision) {
-            return;
-        }
-        for (auto& [handle, entry]: materials) {
-            entry.binding_set = nullptr;
-        }
-        environment_revision = environment.revision;
-    }
-
+    // 注意这里**没有**环境 revision 那套失效逻辑：IBL 三件套已经搬去光照 pass 了，
+    // 所以重烘环境不再需要把每个材质的绑定集全部推倒重建 —— 这是延迟化顺带拿到的简化。
     MaterialResources& resourcesFor(PassRecordContext& context, MaterialHandle handle,
-            const Material& material)
-    {
+            const Material& material) {
         auto& device = context.device();
-        const auto& environment = context.environment();
-        const auto textures =
-                texturesOf(material, context.frame().resources().flatNormalTexture());
+        const auto textures = texturesOf(material, context.frame().resources().flatNormalTexture());
 
         auto& entry = materials[handle];
         if (!entry.constants) {
             nvrhi::BufferDesc desc;
-            desc.setByteSize(sizeof(PbrMaterialConstants))
+            desc.setByteSize(sizeof(GBufferMaterialConstants))
                     .setIsConstantBuffer(true)
-                    .setDebugName("ArtiRenderer PbrMaterialConstants")
+                    .setDebugName("ArtiRenderer GBufferMaterialConstants")
                     .enableAutomaticStateTracking(nvrhi::ResourceStates::ConstantBuffer);
             entry.constants = device.createBuffer(desc);
             if (!entry.constants) {
                 throw std::runtime_error(
-                        "NVRHI failed to create a PBR material constant buffer.");
+                        "NVRHI failed to create a G-Buffer material constant buffer.");
             }
         }
         if (!entry.binding_set || entry.textures != textures) {
             const std::array resources = {
-                arti::renderer::vulkan::NvrhiBindingResource::Buffer(
-                        "frame_constants", *frame_constants),
-                arti::renderer::vulkan::NvrhiBindingResource::Buffer(
-                        "material_constants", *entry.constants),
-                arti::renderer::vulkan::NvrhiBindingResource::Texture(
-                        "base_color_texture", context.texture(textures.base_color)),
-                arti::renderer::vulkan::NvrhiBindingResource::Texture(
-                        "metallic_roughness_texture",
+                arti::renderer::vulkan::NvrhiBindingResource::Buffer("frame_constants",
+                        *frame_constants),
+                arti::renderer::vulkan::NvrhiBindingResource::Buffer("material_constants",
+                        *entry.constants),
+                arti::renderer::vulkan::NvrhiBindingResource::Texture("base_color_texture",
+                        context.texture(textures.base_color)),
+                arti::renderer::vulkan::NvrhiBindingResource::Texture("metallic_roughness_texture",
                         context.texture(textures.metallic_roughness)),
-                arti::renderer::vulkan::NvrhiBindingResource::Texture(
-                        "normal_texture", context.texture(textures.normal)),
-                arti::renderer::vulkan::NvrhiBindingResource::Texture(
-                        "occlusion_texture", context.texture(textures.occlusion)),
-                arti::renderer::vulkan::NvrhiBindingResource::Texture(
-                        "emissive_texture", context.texture(textures.emissive)),
-                arti::renderer::vulkan::NvrhiBindingResource::Sampler(
-                        "material_sampler", *sampler),
-                arti::renderer::vulkan::NvrhiBindingResource::Texture(
-                        "irradiance_cube", *environment.irradiance),
-                arti::renderer::vulkan::NvrhiBindingResource::Texture(
-                        "prefiltered_cube", *environment.prefiltered),
-                arti::renderer::vulkan::NvrhiBindingResource::Texture(
-                        "brdf_lut", *environment.brdf_lut),
-                arti::renderer::vulkan::NvrhiBindingResource::Sampler(
-                        "ibl_sampler", *environment.sampler),
+                arti::renderer::vulkan::NvrhiBindingResource::Texture("normal_texture",
+                        context.texture(textures.normal)),
+                arti::renderer::vulkan::NvrhiBindingResource::Texture("occlusion_texture",
+                        context.texture(textures.occlusion)),
+                arti::renderer::vulkan::NvrhiBindingResource::Texture("emissive_texture",
+                        context.texture(textures.emissive)),
+                arti::renderer::vulkan::NvrhiBindingResource::Sampler("material_sampler", *sampler),
             };
-            entry.binding_set = arti::renderer::vulkan::createNvrhiBindingSet(
-                    device, reflection, 0, *binding_layout, resources);
+            entry.binding_set = arti::renderer::vulkan::createNvrhiBindingSet(device, reflection, 0,
+                    *binding_layout, resources);
             if (!entry.binding_set) {
-                throw std::runtime_error("NVRHI failed to create a PBR binding set.");
+                throw std::runtime_error("NVRHI failed to create a G-Buffer binding set.");
             }
             entry.textures = textures;
         }
@@ -206,23 +161,21 @@ struct PbrOpaquePass::Impl {
     }
 };
 
-PbrOpaquePass::PbrOpaquePass()
-    : m_impl(std::make_unique<Impl>())
-{}
+GBufferPass::GBufferPass()
+        : m_impl(std::make_unique<Impl>()) {}
 
-PbrOpaquePass::~PbrOpaquePass() = default;
+GBufferPass::~GBufferPass() = default;
 
-void PbrOpaquePass::prepare(PassPrepareContext& context)
-{
+void GBufferPass::prepare(PassPrepareContext& context) {
     auto& device = context.device();
 
     if (!m_impl->binding_layout) {
         const auto program = arti::renderer::SlangCompiler::compileGraphics(
-                { detail::shaderPath("forward_pbr.slang") });
-        const auto shaders = arti::renderer::vulkan::createNvrhiGraphicsShaderSet(
-                device, program, "ArtiRenderer forward PBR");
+                { detail::shaderPath("gbuffer.slang") });
+        const auto shaders = arti::renderer::vulkan::createNvrhiGraphicsShaderSet(device, program,
+                "ArtiRenderer G-Buffer");
         if (shaders.binding_layouts.empty() || !shaders.binding_layouts.front()) {
-            throw std::runtime_error("The PBR shader has no NVRHI binding layout.");
+            throw std::runtime_error("The G-Buffer shader has no NVRHI binding layout.");
         }
         m_impl->vertex_shader = shaders.vertex_shader;
         m_impl->pixel_shader = shaders.pixel_shader;
@@ -234,42 +187,42 @@ void PbrOpaquePass::prepare(PassPrepareContext& context)
         sampler_desc.setAllFilters(true).setAllAddressModes(nvrhi::SamplerAddressMode::Repeat);
         m_impl->sampler = device.createSampler(sampler_desc);
         if (!m_impl->sampler) {
-            throw std::runtime_error("NVRHI failed to create the PBR sampler.");
+            throw std::runtime_error("NVRHI failed to create the G-Buffer sampler.");
         }
 
-        // 刻意**不用** volatile，理由和 Blinn-Phong 那条一样：binding layout 是从 shader 反射
-        // 来的，反射看不到 buffer 是不是 volatile，只能发出普通 ConstantBuffer，而
-        // BindingSetItem 会从 buffer 自动判定成 VolatileConstantBuffer，两者不一致 Vulkan 会报
-        // descriptor type 错误。
+        // 刻意**不用** volatile：binding layout 是从 shader 反射来的，反射看不到 buffer 是不是
+        // volatile，只能发出普通 ConstantBuffer，而 BindingSetItem 会从 buffer 自动判定成
+        // VolatileConstantBuffer，两者不一致 Vulkan 会报 descriptor type 错误。
         nvrhi::BufferDesc frame_desc;
-        frame_desc.setByteSize(sizeof(PbrFrameConstants))
+        frame_desc.setByteSize(sizeof(GBufferFrameConstants))
                 .setIsConstantBuffer(true)
-                .setDebugName("ArtiRenderer PbrFrameConstants")
+                .setDebugName("ArtiRenderer GBufferFrameConstants")
                 .enableAutomaticStateTracking(nvrhi::ResourceStates::ConstantBuffer);
         m_impl->frame_constants = device.createBuffer(frame_desc);
         if (!m_impl->frame_constants) {
-            throw std::runtime_error("NVRHI failed to create the PBR frame constant buffer.");
+            throw std::runtime_error("NVRHI failed to create the G-Buffer frame constant buffer.");
         }
 
         const auto attributes = detail::toNvrhiAttributes(detail::meshVertexLayout());
-        m_impl->input_layout = device.createInputLayout(
-                attributes.data(), static_cast<uint32_t>(attributes.size()),
-                m_impl->vertex_shader);
+        m_impl->input_layout = device.createInputLayout(attributes.data(),
+                static_cast<uint32_t>(attributes.size()), m_impl->vertex_shader);
         if (!m_impl->input_layout) {
-            throw std::runtime_error("NVRHI failed to create the PBR input layout.");
+            throw std::runtime_error("NVRHI failed to create the G-Buffer input layout.");
         }
     }
 
-    const auto& framebuffer_info = context.targets().sceneFramebuffer().getFramebufferInfo();
-    if (!m_impl->pipeline ||
-            m_impl->pipeline_framebuffer_info !=
-                    static_cast<const nvrhi::FramebufferInfo&>(framebuffer_info)) {
+    const auto& framebuffer_info = context.gbuffer().framebuffer().getFramebufferInfo();
+    if (!m_impl->pipeline || m_impl->pipeline_framebuffer_info !=
+                                     static_cast<const nvrhi::FramebufferInfo&>(framebuffer_info)) {
         nvrhi::DepthStencilState depth_state;
         depth_state.enableDepthTest().enableDepthWrite().disableStencil();
         nvrhi::RasterState raster_state;
-        // 和另外两个 opaque pass 用同一个正面约定：从外面看逆时针为正面。
+        // 网格按「从外面看逆时针 = 正面」的常规约定编写。PickingPass 用的是同一个值 ——
+        // 两者写的/读的是同一张深度，约定不一致会让「点到的」和「看到的」对不上。
         raster_state.setCullBack().setFrontCounterClockwise(true);
         nvrhi::RenderState render_state;
+        // 混合状态用默认值（三个附件全部关混合、全通道写入）：G-Buffer 存的是属性而不是
+        // 光能，混合在这里没有意义。
         render_state.setDepthStencilState(depth_state).setRasterState(raster_state);
 
         nvrhi::GraphicsPipelineDesc pipeline_desc;
@@ -281,58 +234,28 @@ void PbrOpaquePass::prepare(PassPrepareContext& context)
                 .addBindingLayout(m_impl->binding_layout);
         m_impl->pipeline = device.createGraphicsPipeline(pipeline_desc, framebuffer_info);
         if (!m_impl->pipeline) {
-            throw std::runtime_error("NVRHI failed to create the PBR graphics pipeline.");
+            throw std::runtime_error("NVRHI failed to create the G-Buffer graphics pipeline.");
         }
         m_impl->pipeline_framebuffer_info = framebuffer_info;
-        getLogChannel().debug("Created the PBR graphics pipeline");
+        getLogChannel().debug("Created the G-Buffer graphics pipeline");
     }
 }
 
-void PbrOpaquePass::record(PassRecordContext& context)
-{
+void GBufferPass::record(PassRecordContext& context) {
     auto& frame = context.frame();
     const auto& scene = frame.scene();
     auto& commands = context.commands();
 
-    auto& framebuffer = context.targets().sceneFramebuffer();
+    auto& framebuffer = context.gbuffer().framebuffer();
     nvrhi::ViewportState viewport;
     viewport.addViewportAndScissorRect(framebuffer.getFramebufferInfo().getViewport());
 
     // 逐帧常量写一次，所有 draw 共用。
     const glm::mat4 view_projection = scene.view.projection * scene.view.view;
-    PbrFrameConstants frame_constants{};
+    GBufferFrameConstants frame_constants{};
     std::memcpy(frame_constants.view_projection.data(), glm::value_ptr(view_projection),
             sizeof(frame_constants.view_projection));
-    const glm::vec4 camera{ scene.view.camera_position, 1.0f };
-    std::memcpy(frame_constants.camera_position.data(), glm::value_ptr(camera), sizeof(camera));
-
-    if (const auto* light = findDirectionalLight(scene)) {
-        // LightDesc::direction 是光的传播方向；着色需要的是从表面指向光源，所以取反。
-        const glm::vec3 to_light = glm::normalize(-light->direction);
-        const glm::vec4 direction{ to_light, 0.0f };
-        std::memcpy(frame_constants.light_direction.data(), glm::value_ptr(direction),
-                sizeof(direction));
-        const glm::vec4 color{ glm::vec3{ light->color }, light->intensity };
-        std::memcpy(frame_constants.light_color.data(), glm::value_ptr(color), sizeof(color));
-    }
-    // 没有方向光时 light_color 保持全 0，只剩环境光贡献。
-
-    // 环境光来自 RenderScene::environment。有 IBL 时 ambient_color 不参与着色，
-    // 但照样填上 —— 烘焙还没就绪的那一帧会退回它。
-    const auto& environment = scene.environment;
-    const glm::vec4 ambient = environment.enabled
-            ? glm::vec4{ glm::vec3{ environment.sky_color } * environment.intensity, 1.0f }
-            : glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f };
-    std::memcpy(frame_constants.ambient_color.data(), glm::value_ptr(ambient), sizeof(ambient));
-
-    const auto& ibl = context.environment();
-    const bool use_ibl = environment.enabled && ibl.ready;
-    frame_constants.environment_params = { environment.enabled ? environment.intensity : 0.0f,
-        use_ibl ? 1.0f : 0.0f, static_cast<float>(ibl.prefiltered_mips), 0.0f };
-
     commands.writeBuffer(m_impl->frame_constants, &frame_constants, sizeof(frame_constants));
-
-    m_impl->invalidateIfEnvironmentChanged(ibl);
 
     // 先把本帧要用到的材质常量全部写好，再进绘制循环。分两趟是为了不在 setGraphicsState 之间
     // 插 writeBuffer —— 那会让命令列表在绘制中途做资源状态转换。
@@ -359,7 +282,7 @@ void PbrOpaquePass::record(PassRecordContext& context)
             continue;
         }
 
-        PbrDrawConstants constants{};
+        GBufferDrawConstants constants{};
         std::memcpy(constants.model.data(), glm::value_ptr(draw.transform),
                 sizeof(constants.model));
         // glm 是列主序，normal_matrix[col][row]；着色器按行做 dot，所以这里按行取。

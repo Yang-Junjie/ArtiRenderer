@@ -19,7 +19,7 @@
 namespace arti::rendering {
 namespace {
 
-// MVP 在 CPU 侧乘好，跟 UnlitOpaquePass 一样 —— 拾取不需要世界坐标，
+// MVP 在 CPU 侧乘好而不是像 GBufferPass 那样分开传 —— 拾取不需要世界坐标，
 // 所以没必要为它建一个逐帧 UBO。
 struct PickingConstants {
     std::array<float, 16> model_view_projection;
@@ -58,7 +58,7 @@ struct PickingPass::Impl {
     nvrhi::FramebufferInfo pipeline_framebuffer_info;
 
     // ID 缓冲和它的 framebuffer。深度是借 RenderTargetSet 的，不自己建 ——
-    // 借的那张必须和 Opaque 写的是同一张，否则测试出来的可见性就不是屏幕上那个。
+    // 借的那张必须和 GBuffer 写的是同一张，否则测试出来的可见性就不是屏幕上那个。
     nvrhi::TextureHandle id_texture;
     nvrhi::FramebufferHandle framebuffer;
     uint64_t bound_revision{ std::numeric_limits<uint64_t>::max() };
@@ -171,7 +171,7 @@ void PickingPass::prepare(PassPrepareContext& context) {
     const auto& framebuffer_info = m_impl->framebuffer->getFramebufferInfo();
     if (!m_impl->pipeline || m_impl->pipeline_framebuffer_info !=
                                      static_cast<const nvrhi::FramebufferInfo&>(framebuffer_info)) {
-        // 深度测试开、深度写关：Opaque 已经把深度写好了，这里只借它判可见性。
+        // 深度测试开、深度写关：GBuffer 阶段已经把深度写好了，这里只借它判可见性。
         // LessOrEqual 而不是 Less —— 相等才是「就是屏幕上那个片元」。
         nvrhi::DepthStencilState depth_state;
         depth_state.setDepthTestEnable(true)

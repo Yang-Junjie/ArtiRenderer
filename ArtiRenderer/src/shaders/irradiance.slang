@@ -1,7 +1,7 @@
 // 漫反射辐照度：对环境 cube 做余弦加权的半球卷积。结果很低频，所以 32² 就够。
 //
 // **约定警告**：最后乘的是 pi / sample_count，也就是产物是真正的辐照度 E，1/π 那一项**没有**
-// 折进来。配套的着色端（forward_pbr.slang）因此是 `base_color * irradiance`，同样不除 π。
+// 折进来。配套的着色端（deferred_lighting.slang）因此是 `albedo * irradiance`，同样不除 π。
 // 这一对比严格的 Lambertian（albedo/π · E）亮 π 倍 —— 是从 ArtiRenderer-old 整体搬过来的
 // 约定，不是笔误。要调就两边一起调，只改一边会让漫反射差 π 倍（约 3.14，非常明显）。
 #include "ibl_common.slang"

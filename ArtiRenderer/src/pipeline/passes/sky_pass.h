@@ -7,7 +7,7 @@ namespace arti::rendering {
 
 // 把环境 cube 画成天空背景。全屏三角形 + 逆 view-projection 反投影出视线方向。
 //
-// 排在 Opaque 之后（LinearStage::Sky）：深度测试 LessOrEqual、不写深度，所以只填没被物体
+// 排在 Lighting 之后（LinearStage::Sky）：深度测试 LessOrEqual、不写深度，所以只填没被物体
 // 覆盖的像素。反过来先画天空的话，每个被挡住的像素都要白画一遍。
 //
 // 环境没开、没勾 sky_visible、或者烘焙还没就绪时整个 pass 跳过 —— 此时背景是 ClearScenePass

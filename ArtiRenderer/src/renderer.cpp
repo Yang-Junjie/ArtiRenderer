@@ -18,8 +18,8 @@ namespace {
 
 std::unique_ptr<Pipeline> createPipeline(PipelineKind kind, arti::renderer::RenderDevice& device) {
     switch (kind) {
-        case PipelineKind::Forward:
-            return createForwardPipeline(device);
+        case PipelineKind::Deferred:
+            return createDeferredPipeline(device);
     }
     throw std::invalid_argument("Unsupported ArtiRenderer pipeline kind.");
 }
