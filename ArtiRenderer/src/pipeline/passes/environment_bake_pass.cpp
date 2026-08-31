@@ -130,7 +130,6 @@ struct EnvironmentBakePass::Impl {
     // 1×1 全黑的兜底。环境关掉时也得给 binding set 提供有效纹理 ——
     // 空句柄会让 createNvrhiBindingSet 报 "no matching resource"。
     nvrhi::TextureHandle fallback_cube;
-    nvrhi::TextureHandle fallback_lut;
     bool fallback_cleared{ false };
 
     struct Baked {
@@ -145,6 +144,24 @@ struct EnvironmentBakePass::Impl {
     bool published_ready{ false };
     uint64_t revision{ 0 };
 
+    // split-sum 的 DFG 项。只依赖 (NoV, roughness)，和环境贴图无关，所以全局烘一次。
+    void bakeBrdfLut(nvrhi::IDevice& device, nvrhi::ICommandList& commands) {
+        if (brdf_baked) {
+            return;
+        }
+        nvrhi::ITexture& lut = *brdf_lut;
+        commands.setTextureState(&lut, nvrhi::AllSubresources,
+                nvrhi::ResourceStates::UnorderedAccess);
+        const std::array resources = { detail::makeComputeTextureBinding("brdf_output", lut,
+                nvrhi::TextureDimension::Texture2D, nvrhi::AllSubresources) };
+        const BrdfPush push{ kBrdfSize, kBrdfSamples, { 0, 0 } };
+        const auto bindings = detail::createComputeBindingSet(device, brdf, resources);
+        detail::dispatchCompute(commands, brdf, *bindings, &push, sizeof(push), kBrdfSize,
+                kBrdfSize, 1);
+        commands.setPermanentTextureState(&lut, nvrhi::ResourceStates::ShaderResource);
+        brdf_baked = true;
+    }
+
     void publish(EnvironmentResources& out, TextureHandle key, const Baked* baked) {
         const bool ready = baked != nullptr;
         if (published != key || published_ready != ready) {
@@ -155,7 +172,8 @@ struct EnvironmentBakePass::Impl {
         out.environment = ready ? baked->environment : fallback_cube;
         out.irradiance = ready ? baked->irradiance : fallback_cube;
         out.prefiltered = ready ? baked->prefiltered : fallback_cube;
-        out.brdf_lut = ready ? brdf_lut : fallback_lut;
+        // 和三张 cube 不同，LUT 不区分 ready —— 它第一帧就烘好了，见 record()。
+        out.brdf_lut = brdf_lut;
         out.sampler = cube_sampler;
         out.prefiltered_mips = ready ? kPrefilteredMips : 1;
         out.ready = ready;
@@ -206,9 +224,9 @@ void EnvironmentBakePass::prepare(PassPrepareContext& context) {
     }
 
     m_impl->brdf_lut = makeLut(device, kBrdfSize, "ArtiRenderer BRDF LUT");
+    // 只有 cube 需要兜底：BRDF LUT 和环境贴图无关，record() 第一帧就烘好，之后一直有效。
     m_impl->fallback_cube = makeCube(device, 1, 1, "ArtiRenderer fallback IBL cube");
-    m_impl->fallback_lut = makeLut(device, 1, "ArtiRenderer fallback BRDF LUT");
-    if (!m_impl->brdf_lut || !m_impl->fallback_cube || !m_impl->fallback_lut) {
+    if (!m_impl->brdf_lut || !m_impl->fallback_cube) {
         throw std::runtime_error("NVRHI failed to create the environment bake resources.");
     }
 
@@ -224,13 +242,16 @@ void EnvironmentBakePass::record(PassRecordContext& context) {
     if (!m_impl->fallback_cleared) {
         const nvrhi::Color black{ 0.0f, 0.0f, 0.0f, 0.0f };
         commands.clearTextureFloat(m_impl->fallback_cube, nvrhi::AllSubresources, black);
-        commands.clearTextureFloat(m_impl->fallback_lut, nvrhi::AllSubresources, black);
         commands.setPermanentTextureState(m_impl->fallback_cube,
-                nvrhi::ResourceStates::ShaderResource);
-        commands.setPermanentTextureState(m_impl->fallback_lut,
                 nvrhi::ResourceStates::ShaderResource);
         m_impl->fallback_cleared = true;
     }
+
+    // BRDF LUT 排在环境判断**之前**：它只依赖 (NoV, roughness)，和环境贴图无关，所以第一帧
+    // 就烘好、之后一直有效。这不只是提前 —— DeferredLightingPass 的多次散射能量补偿要读它，
+    // 而那条路和有没有 IBL 无关（没有环境贴图的场景里粗糙金属同样会丢能量）。
+    // 留在下面「有环境贴图才烘」的分支里的话，那种场景就永远拿不到补偿。
+    m_impl->bakeBrdfLut(device, commands);
 
     const auto& environment = context.frame().scene().environment;
     const TextureHandle source = environment.equirectangular_texture;
@@ -342,19 +363,6 @@ void EnvironmentBakePass::record(PassRecordContext& context) {
         dispatch(m_impl->prefilter, resources, &push, sizeof(push), size, size, kCubeFaces);
     }
     commands.setPermanentTextureState(&prefiltered, nvrhi::ResourceStates::ShaderResource);
-
-    // 5. BRDF LUT 和环境贴图无关，全局烘一次就够。
-    if (!m_impl->brdf_baked) {
-        nvrhi::ITexture& lut = *m_impl->brdf_lut;
-        commands.setTextureState(&lut, nvrhi::AllSubresources,
-                nvrhi::ResourceStates::UnorderedAccess);
-        const std::array resources = { detail::makeComputeTextureBinding("brdf_output", lut,
-                nvrhi::TextureDimension::Texture2D, nvrhi::AllSubresources) };
-        const BrdfPush push{ kBrdfSize, kBrdfSamples, { 0, 0 } };
-        dispatch(m_impl->brdf, resources, &push, sizeof(push), kBrdfSize, kBrdfSize, 1);
-        commands.setPermanentTextureState(&lut, nvrhi::ResourceStates::ShaderResource);
-        m_impl->brdf_baked = true;
-    }
 
     getLogChannel().info("Baked the IBL environment for texture {}", source.toString());
     const auto inserted = m_impl->cache.emplace(source, std::move(baked));

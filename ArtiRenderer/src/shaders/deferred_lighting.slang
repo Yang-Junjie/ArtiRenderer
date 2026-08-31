@@ -75,23 +75,34 @@ float3 reconstructWorldPosition(float2 uv, float depth)
     return world.xyz / world.w;
 }
 
-// GGX / Trowbridge-Reitz 法线分布。alpha = roughness^2 是 Disney 那套「感知线性」的约定。
-float distributionGGX(float noh, float roughness)
+// GGX / Trowbridge-Reitz 法线分布。
+//
+// alpha 由调用方算好传进来（alpha = roughness^2，Disney 那套「感知线性」的约定），不在函数
+// 里算：D 和 V 必须用同一个 alpha，各算一次早晚会有人只改一处。
+float distributionGGX(float noh, float alpha)
 {
-    const float alpha = roughness * roughness;
     const float alpha_squared = alpha * alpha;
     const float denominator = noh * noh * (alpha_squared - 1.0) + 1.0;
     return alpha_squared / max(kPi * denominator * denominator, 1e-6);
 }
 
-// Smith 几何项，Schlick-GGX 近似。k 用直接光的那个取值 (r+1)^2/8；IBL 那条路的 k 已经折进了
-// BRDF LUT，所以这个函数只给直接光用。
-float geometrySmith(float nov, float nol, float roughness)
+// 高度相关的 Smith-GGX 可见性项（Filament 的 V_SmithGGXCorrelated）。
+//
+// 返回的是 **visibility** 而不是几何项 G —— 1/(4·NoV·NoL) 已经折进去了，所以镜面项写成
+// D * V * F，没有那次显式除法（原来那句 `/ max(4.0 * nov * nol, 1e-4)` 因此消失了）。
+//
+// 换掉原来分离式的 Schlick-GGX（k = (r+1)^2/8，UE4/LearnOpenGL 那一支）的理由：那个形式把
+// masking 和 shadowing 当成独立事件，而它们在同一个微表面场上是相关的 —— 视线和光线都掠射
+// 时尤其明显。这里是精确形式而不是 Filament 的 fast 近似：分母那两个 sqrt 在延迟管线里
+// 一个像素只算一次，省不出什么。
+//
+// IBL 那条路不用这个函数：它的 Smith 项（k = a/2）已经烘进 BRDF LUT 了，见 brdf_lut.slang。
+float visibilitySmithGGXCorrelated(float nov, float nol, float alpha)
 {
-    const float k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
-    const float ggx_v = nov / lerp(nov, 1.0, k);
-    const float ggx_l = nol / lerp(nol, 1.0, k);
-    return ggx_v * ggx_l;
+    const float alpha_squared = alpha * alpha;
+    const float lambda_v = nol * sqrt(nov * nov * (1.0 - alpha_squared) + alpha_squared);
+    const float lambda_l = nov * sqrt(nol * nol * (1.0 - alpha_squared) + alpha_squared);
+    return 0.5 / max(lambda_v + lambda_l, 1e-5);
 }
 
 float3 fresnelSchlick(float3 f0, float voh)
@@ -127,11 +138,37 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     const float3 view_direction =
             normalize(lighting_constants.camera_position.xyz - world_position);
     const float3 light_direction = normalize(lighting_constants.light_direction.xyz);
-    // nov 不能为 0：它出现在 specular 的分母里。
+    // nov 不能为 0：可见性项的分母里两个 lambda 都带它，同时为 0 会让镜面项炸到上限；
+    // 它也是 DFG LUT 的采样坐标。
     const float nov = max(dot(normal, view_direction), 1e-4);
     const float nol = max(dot(normal, light_direction), 0.0);
     // 介质的垂直反射率固定 0.04，金属用自己的 albedo 当 F0 —— metallic 工作流的全部内容。
     const float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
+    const float alpha = roughness * roughness;
+
+    // split-sum 的 DFG 项。在 IBL 分支**之外**采，因为下面的能量补偿两条路都要用，而 LUT 只
+    // 依赖 (NoV, roughness)、和有没有环境贴图无关（EnvironmentBakePass 第一帧就烘好它，
+    // 不等第一张 HDR）。
+    const float2 dfg = brdf_lut.SampleLevel(ibl_sampler, float2(nov, roughness), 0.0).rg;
+
+    // 多次散射的能量补偿。单次散射的 GGX 只算「进来一次、反射一次」，微表面之间来回弹的那部分
+    // 直接丢了，所以粗糙金属会偏暗发灰 —— roughness 越大丢得越多。
+    //
+    // 补偿系数按这张 LUT 自己的拆分推：brdf_lut.slang 存的是 x = ∫(1-Fc)·Gv、y = ∫Fc·Gv，
+    // 所以 f0 = 1（全反射）时的方向反射率就是 x + y，也就是单次散射真正留下的那部分能量。
+    // 缺的是 1/(x+y)，按 f0 加权插值回去 —— 金属（f0 ≈ 0.9）补得多，介质（f0 = 0.04）几乎不补，
+    // 这正是物理上该有的样子。
+    //
+    // **不要照抄 Filament 的 `1 + f0 * (1/dfg.y - 1)`**：那是按它自己 LUT 的通道语义写的，
+    // 和这里的 (1-Fc)/Fc 拆分不是同一件事，直接搬会让粗糙金属亮到发白。
+    //
+    // 不给分母垫 epsilon 而是显式判 > 0：这个和为 0 只有「LUT 还没烘」一种可能（理论上不会
+    // 发生，EnvironmentBakePass 第一帧就烘），那种情况下想要的是**不补偿**而不是补一个无穷。
+    // 正常范围内它不会小到出问题 —— GGX 的单次散射方向反射率在整张 LUT 上都在 0.4 以上，
+    // 所以补偿系数最多到 2.4 倍左右，不需要再夹一个上限。
+    const float single_scatter = dfg.x + dfg.y;
+    const float3 energy_compensation =
+            single_scatter > 0.0 ? 1.0 + f0 * (1.0 / single_scatter - 1.0) : float3(1.0, 1.0, 1.0);
 
     float3 direct = float3(0.0, 0.0, 0.0);
     if (nol > 0.0)
@@ -141,8 +178,8 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         const float voh = max(dot(view_direction, half_direction), 0.0);
 
         const float3 fresnel = fresnelSchlick(f0, voh);
-        const float3 specular = distributionGGX(noh, roughness) *
-                geometrySmith(nov, nol, roughness) * fresnel / max(4.0 * nov * nol, 1e-4);
+        const float3 specular = distributionGGX(noh, alpha) *
+                visibilitySmithGGXCorrelated(nov, nol, alpha) * fresnel * energy_compensation;
         // 金属没有漫反射；(1 - fresnel) 是能量守恒 —— 反射掉的那部分不再进入次表面。
         const float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / kPi;
 
@@ -168,7 +205,6 @@ float4 fragmentMain(VertexOutput input) : SV_Target
                 roughness * max(lighting_constants.environment_params.z - 1.0, 0.0);
         const float3 prefiltered =
                 prefiltered_cube.SampleLevel(ibl_sampler, reflection, prefiltered_mip).rgb;
-        const float2 brdf = brdf_lut.SampleLevel(ibl_sampler, float2(nov, roughness), 0.0).rg;
 
         // 环境的 Fresnel 要带 roughness：粗糙表面的掠射角反射远不如光滑表面那么强，
         // 用直接光那个 fresnelSchlick 会让粗糙金属边缘出现一圈假亮边。
@@ -177,7 +213,8 @@ float4 fragmentMain(VertexOutput input) : SV_Target
 
         ambient_diffuse =
                 (1.0 - ibl_fresnel) * (1.0 - metallic) * albedo * irradiance * environment_weight;
-        ambient_specular = prefiltered * (ibl_fresnel * brdf.x + brdf.y) * environment_weight;
+        ambient_specular = prefiltered * (ibl_fresnel * dfg.x + dfg.y) * energy_compensation *
+                environment_weight;
     }
     else
     {
