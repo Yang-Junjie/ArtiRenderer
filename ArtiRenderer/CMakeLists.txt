@@ -34,11 +34,19 @@ target_include_directories(artirenderer
         "${CMAKE_CURRENT_SOURCE_DIR}/src/detail"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline"
 )
+# 内建 slang 源码目录。CACHE INTERNAL 是必须的：artirenderer_stage_shaders() 在**调用点**
+# 展开，而调用点在 Runtime / Tools 的目录作用域里，那里看不见这里的普通变量。
+set(ARTIRENDERER_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/shaders" CACHE INTERNAL
+    "ArtiRenderer builtin Slang sources")
+
 target_compile_definitions(artirenderer PRIVATE
     ARTIRENDERER_VERSION_STRING="${PROJECT_VERSION}"
-    # 内建 slang 直接从源码树读，改 shader 不用重新编译 C++。
-    # 代价是二进制不可搬移，见 src/detail/shader_paths.h。
-    ARTIRENDERER_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/shaders"
+    # 着色器是运行期编译的，所以 .slang 必须在运行时存在。这个宏是**回落**路径（源码树），
+    # 优先用的是 exe 旁边由 artirenderer_stage_shaders() 拷过去的那一份 ——
+    # 两段查找见 src/detail/shader_paths.h。
+    #
+    # 保留源码树这条回落是刻意的：开发期改 shader 不用重新编译 C++。
+    ARTIRENDERER_SHADER_DIR="${ARTIRENDERER_SHADER_SOURCE_DIR}"
 )
 if(WIN32)
     target_compile_definitions(artirenderer PRIVATE NOMINMAX)
@@ -76,3 +84,30 @@ set(ARTIRENDERER_SHADERS
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${ARTIRENDERER_SHADERS})
 target_sources(artirenderer PRIVATE ${ARTIRENDERER_SHADERS})
 set_source_files_properties(${ARTIRENDERER_SHADERS} PROPERTIES HEADER_FILE_ONLY TRUE)
+
+# 把内建 shader 拷到 target 旁边的 shaders/。由**消费方 exe** 调用，和
+# artichoco_stage_vulkan_sdk_runtime() 一个形状 —— 每个 exe 自己决定要不要，而不是做成一个
+# 全局 custom target（那会把路径耦合到 CMAKE_RUNTIME_OUTPUT_DIRECTORY 上）。
+#
+# 着色器是运行期编译的，所以 .slang 必须跟着二进制走。shaderPath() 优先用这一份，
+# 没有才回落到 ARTIRENDERER_SHADER_DIR（源码树），见 src/detail/shader_paths.h。
+function(artirenderer_stage_shaders target)
+    if(NOT TARGET "${target}")
+        message(FATAL_ERROR "Cannot stage shaders for unknown target: ${target}")
+    endif()
+
+    # 整目录拷，而不是按 ARTIRENDERER_SHADERS 逐个拷：漏登记一个 .slang 只会让 IDE 分组少一项，
+    # 漏拷一个却会让运行时找不到文件（而且 shaderPath() 已经选定了 staged 根，不会再回落）。
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.26)
+        set(_arti_copy_directory copy_directory_if_different)
+    else()
+        set(_arti_copy_directory copy_directory)
+    endif()
+
+    add_custom_command(TARGET "${target}" POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E ${_arti_copy_directory}
+            "${ARTIRENDERER_SHADER_SOURCE_DIR}"
+            "$<TARGET_FILE_DIR:${target}>/shaders"
+        VERBATIM
+    )
+endfunction()
