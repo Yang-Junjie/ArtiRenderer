@@ -218,7 +218,7 @@ void GBufferPass::prepare(PassPrepareContext& context) {
         depth_state.enableDepthTest().enableDepthWrite().disableStencil();
         nvrhi::RasterState raster_state;
         // 网格按「从外面看逆时针 = 正面」的常规约定编写。PickingPass 用的是同一个值 ——
-        // 两者写的/读的是同一张深度，约定不一致会让「点到的」和「看到的」对不上。
+        // 它重画同一批几何来解拾取，约定不一致会让「点到的」和「看到的」对不上。
         raster_state.setCullBack().setFrontCounterClockwise(true);
         nvrhi::RenderState render_state;
         // 混合状态用默认值（三个附件全部关混合、全通道写入）：G-Buffer 存的是属性而不是

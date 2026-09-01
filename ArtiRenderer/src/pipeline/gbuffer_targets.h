@@ -15,10 +15,13 @@ namespace arti::rendering {
 // 色彩空间。所以照 EnvironmentResources 的先例另起一个同样具名的结构：pass 依然互不认识，
 // 顺序由 LinearStage 表达（GBuffer < Lighting，装错在 addPass 就抛）。
 //
-// 深度不在这里：它是 RenderTargetSet 的 SceneDepth。G-Buffer 只是**借**它当深度附件 ——
-// PickingPass 也借同一张，两个 pass 因此天然共享同一份可见性，不用担心两套深度对不上。
-// 代价是这个类要跟着 RenderTargetSet 的生命周期走，所以 prepare() 直接吃它，
-// 并用它的 revision() 当重建触发条件。
+// 深度不在这里：它是 RenderTargetSet 的 SceneDepth。G-Buffer 只是**借**它当深度附件，
+// DeferredLightingPass 随后把它当 SRV 采样反投影出世界坐标 —— 一张深度两个用途，所以它归
+// RenderTargetSet 管而不是归这里。代价是这个类要跟着 RenderTargetSet 的生命周期走，
+// 所以 prepare() 直接吃它，并用它的 revision() 当重建触发条件。
+//
+// PickingPass **不**借这张：它要做的是「深度相等」的比较，而那要求两个 pass 的顶点变换
+// 逐位一致，靠不住。它自己带一张深度，见 picking_pass.cpp。
 //
 // 通道分配（写入侧 gbuffer.slang / 读取侧 deferred_lighting.slang 必须和这里逐通道对齐）：
 //   albedo_metallic     SRGBA8_UNORM   rgb = albedo（硬件做 sRGB 编码），a = metallic

@@ -17,7 +17,10 @@ namespace arti::rendering {
 // 所以不会 stall GPU 等自己刚提交的活）。因此 picking_id 必须跨帧稳定 ——
 // 逐帧重编号的话结果回来时编号表已经变了。这个约束由调用方保证，见 DrawItem::picking_id。
 //
-// 深度复用 GBuffer 阶段写好的那张，LessOrEqual 且不写入，所以被遮挡的片元不会写 ID。
+// 遮挡由这个 pass 自己的深度缓冲决定（每次拾取清成 1.0，Less 且写入），而不是复用 GBuffer
+// 写好的那张做 LessOrEqual：后者要求两个 pass 的顶点变换逐位一致，而它们的 MVP 一个在 CPU
+// 侧乘好、一个在着色器里分两步乘，差一个 ULP 片元就被丢掉 —— 表现成拾取时灵时不灵。
+// 详见 picking_pass.cpp 里 Impl::depth_texture 上面那段。
 class PickingPass final : public LinearPass {
 public:
     PickingPass();

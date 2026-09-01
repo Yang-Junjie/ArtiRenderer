@@ -2,8 +2,9 @@
 // 之后按像素读回来就知道点到了谁。
 //
 // 只有一个 uint 输出，没有颜色也没有光照 —— 拾取不需要知道东西长什么样。
-// 深度用的是 Opaque 阶段已经写好的那张，测试用 LessOrEqual 且不写入，
-// 所以只有屏幕上真正可见的那个片元会写下 ID，被挡住的不会。
+// 遮挡靠 PickingPass 自己那张深度（每次拾取清成 1.0，Less 且写入）解决，所以只有最靠前的
+// 那个片元会写下 ID。不复用 G-Buffer 的深度是因为那要求顶点变换和 gbuffer.slang 逐位一致，
+// 而这里的 MVP 是 CPU 侧乘好的 —— 详见 picking_pass.cpp。
 
 struct PickingConstants
 {

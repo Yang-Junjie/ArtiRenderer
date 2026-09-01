@@ -19,8 +19,11 @@
 namespace arti::rendering {
 namespace {
 
-// MVP 在 CPU 侧乘好而不是像 GBufferPass 那样分开传 —— 拾取不需要世界坐标，
-// 所以没必要为它建一个逐帧 UBO。
+// MVP 在 CPU 侧乘好而不是像 GBufferPass 那样分开传 —— 拾取不需要世界坐标，所以没必要为它
+// 建一个逐帧 UBO；而且 model + view_projection + id 是 132 字节，越过了 Vulkan 保证的 128。
+//
+// 因此这里算出的深度和 GBufferPass 的不逐位相同。这个 pass 用自己的深度缓冲就是为了不受它
+// 影响，见 Impl::depth_texture。
 struct PickingConstants {
     std::array<float, 16> model_view_projection;
     uint32_t picking_id;
@@ -35,6 +38,7 @@ static_assert(sizeof(PickingConstants) == 80);
 static_assert(offsetof(PickingConstants, picking_id) == 64);
 
 constexpr auto pickingIdFormat = nvrhi::Format::R32_UINT;
+constexpr auto pickingDepthFormat = nvrhi::Format::D32;
 
 } // namespace
 
@@ -57,9 +61,18 @@ struct PickingPass::Impl {
     nvrhi::GraphicsPipelineHandle pipeline;
     nvrhi::FramebufferInfo pipeline_framebuffer_info;
 
-    // ID 缓冲和它的 framebuffer。深度是借 RenderTargetSet 的，不自己建 ——
-    // 借的那张必须和 GBuffer 写的是同一张，否则测试出来的可见性就不是屏幕上那个。
+    // ID 缓冲、这个 pass 自己的深度缓冲，和把两者绑起来的 framebuffer。
+    //
+    // 深度**不能**借 GBuffer 写好的那张再用 LessOrEqual 去比：那等于要求两个 pass 算出的
+    // SV_Position.z 逐位相同，而这里的 MVP 是 CPU 侧乘好的一个矩阵、GBufferPass 是在着色器里
+    // 分两步乘的（mul(view_projection, mul(model, p))）。两者数学上相等、浮点上不是 ——
+    // 差一个 ULP 那个片元就测试失败、ID 写不进去。误差的符号逐三角形/逐像素乱跳，所以表现成
+    // 「同一个物体，这里点得到、那里点不到，动一下相机结论又变了」。
+    //
+    // 自己清一张深度、自己写，可见性就由这个 pass 自洽地决定，不再依赖跨 pass 的位级一致。
+    // 几何本来就要重画一遍，多写一次深度不额外花钱；代价只是一张和场景同尺寸的 D32。
     nvrhi::TextureHandle id_texture;
+    nvrhi::TextureHandle depth_texture;
     nvrhi::FramebufferHandle framebuffer;
     uint64_t bound_revision{ std::numeric_limits<uint64_t>::max() };
 
@@ -86,8 +99,20 @@ struct PickingPass::Impl {
             throw std::runtime_error("NVRHI failed to create the picking ID texture.");
         }
 
+        nvrhi::TextureDesc depth_desc;
+        depth_desc.setWidth(scene_info.width)
+                .setHeight(scene_info.height)
+                .setFormat(pickingDepthFormat)
+                .setIsRenderTarget(true)
+                .setDebugName("ArtiRenderer PickingDepth")
+                .enableAutomaticStateTracking(nvrhi::ResourceStates::DepthWrite);
+        depth_texture = device.createTexture(depth_desc);
+        if (!depth_texture) {
+            throw std::runtime_error("NVRHI failed to create the picking depth texture.");
+        }
+
         nvrhi::FramebufferDesc framebuffer_desc;
-        framebuffer_desc.addColorAttachment(id_texture).setDepthAttachment(&targets.sceneDepth());
+        framebuffer_desc.addColorAttachment(id_texture).setDepthAttachment(depth_texture.Get());
         framebuffer = device.createFramebuffer(framebuffer_desc);
         if (!framebuffer) {
             throw std::runtime_error("NVRHI failed to create the picking framebuffer.");
@@ -171,12 +196,12 @@ void PickingPass::prepare(PassPrepareContext& context) {
     const auto& framebuffer_info = m_impl->framebuffer->getFramebufferInfo();
     if (!m_impl->pipeline || m_impl->pipeline_framebuffer_info !=
                                      static_cast<const nvrhi::FramebufferInfo&>(framebuffer_info)) {
-        // 深度测试开、深度写关：GBuffer 阶段已经把深度写好了，这里只借它判可见性。
-        // LessOrEqual 而不是 Less —— 相等才是「就是屏幕上那个片元」。
+        // 深度是这个 pass 自己的，所以测试和写入都开、Less —— 和 GBufferPass 同一个约定。
+        // 为什么不借 GBuffer 的深度做 LessOrEqual，见 Impl 里 depth_texture 上面那段。
         nvrhi::DepthStencilState depth_state;
         depth_state.setDepthTestEnable(true)
-                .setDepthWriteEnable(false)
-                .setDepthFunc(nvrhi::ComparisonFunc::LessOrEqual)
+                .setDepthWriteEnable(true)
+                .setDepthFunc(nvrhi::ComparisonFunc::Less)
                 .disableStencil();
         nvrhi::RasterState raster_state;
         raster_state.setCullBack().setFrontCounterClockwise(true);
@@ -238,8 +263,11 @@ void PickingPass::record(PassRecordContext& context) {
     auto& framebuffer = *m_impl->framebuffer;
     const auto& framebuffer_info = framebuffer.getFramebufferInfo();
 
-    // 0 是「空处」，所以先整张清成 0。
+    // 0 是「空处」，所以 ID 缓冲先整张清成 0；深度清成 1.0（远平面）。
+    // 清在这里而不是 ClearScenePass：这两张只在有拾取请求的帧才有意义。
     commands.clearTextureUInt(m_impl->id_texture, nvrhi::AllSubresources, 0);
+    commands.clearDepthStencilTexture(m_impl->depth_texture, nvrhi::AllSubresources, true, 1.0f,
+            false, 0);
 
     nvrhi::ViewportState viewport;
     viewport.addViewportAndScissorRect(framebuffer_info.getViewport());
@@ -253,7 +281,9 @@ void PickingPass::record(PassRecordContext& context) {
             continue;
         }
         const auto resolved = detail::resolveDraw(context.frame(), draw);
-        if (!resolved) {
+        // 和 GBufferPass 逐条对齐地跳过：那边不画的东西屏幕上就不存在，这边要是画了，
+        // 点空处会选中一个看不见的实体。加几何 pass（透明、蒙皮）时这个条件要跟着放宽。
+        if (!resolved || resolved->material.type != MaterialType::PBR) {
             continue;
         }
 
