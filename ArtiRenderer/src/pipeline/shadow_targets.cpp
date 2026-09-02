@@ -15,6 +15,10 @@ constexpr auto shadowDepthFormat = nvrhi::Format::D32;
 } // namespace
 
 void ShadowTargets::prepare(nvrhi::IDevice& device) {
+    // 每帧先清：只有 ShadowPass 真的渲了这一帧才会重新设上。否则关掉投影的那一帧
+    // 会拿到上一帧的矩阵，阴影“冻”在那里不动。
+    m_has_cascades = false;
+
     if (m_depth_array) {
         return;
     }
@@ -70,6 +74,13 @@ nvrhi::IFramebuffer& ShadowTargets::framebuffer(uint32_t cascade) const {
         throw std::logic_error("ShadowTargets::framebuffer() before prepare().");
     }
     return *m_framebuffers[cascade];
+}
+
+void ShadowTargets::setCascades(const std::array<ShadowCascade, kShadowCascadeCount>& cascades,
+        float shadow_distance) noexcept {
+    m_cascades = cascades;
+    m_shadow_distance = shadow_distance;
+    m_has_cascades = true;
 }
 
 } // namespace arti::rendering

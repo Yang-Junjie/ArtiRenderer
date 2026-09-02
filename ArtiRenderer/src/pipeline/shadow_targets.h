@@ -5,6 +5,8 @@
 #include <array>
 #include <cstdint>
 
+#include <glm/mat4x4.hpp>
+
 namespace arti::rendering {
 
 // 方向光级联阴影的级数。四级是主流默认（Godot 的 SHADOW_PARALLEL_4_SPLITS 就是默认值），
@@ -14,6 +16,16 @@ inline constexpr uint32_t kShadowCascadeCount = 4;
 // 每一级的边长。写死而不是做成配置项：它和级数一样属于「质量档位」，而现在没有画质档位系统
 // 可以挂靠 —— 暴露出去就要序列化、Inspector 和取值校验，收益不抵成本。
 inline constexpr uint32_t kShadowMapResolution = 2048;
+
+// 一级 cascade 的全部结果。ShadowPass 每帧算好塞进 ShadowTargets，DeferredLightingPass 读。
+struct ShadowCascade {
+    // 世界空间 -> 这一级的光源裁剪空间。渲深度图和采样都用它。
+    glm::mat4 light_view_projection{ 1.0f };
+    // 这一级覆盖到相机前方多远（view-space 距离）。着色端按它选级。
+    float split_far{ 0.0f };
+    // 一个 texel 在这一级覆盖多少世界单位。PCF 的采样步长要它。
+    float world_units_per_texel{ 0.0f };
+};
 
 // 级联阴影的深度图。ShadowPass 写，DeferredLightingPass 读。
 //
@@ -51,10 +63,25 @@ public:
     // 第 cascade 级的 framebuffer，渲染侧用。越界抛。
     nvrhi::IFramebuffer& framebuffer(uint32_t cascade) const;
 
+    // 这一帧的 cascade 参数。ShadowPass 真的渲了才设；prepare() 每帧先清掉，
+    // 所以「这一帧没阴影」和「上一帧的参数残留」不会混。
+    void setCascades(const std::array<ShadowCascade, kShadowCascadeCount>& cascades,
+            float shadow_distance) noexcept;
+    bool hasCascades() const noexcept { return m_has_cascades; }
+    const std::array<ShadowCascade, kShadowCascadeCount>& cascades() const noexcept {
+        return m_cascades;
+    }
+    // 阴影整体覆盖到多远，等于 min(相机远平面, light.shadow_distance)。
+    float shadowDistance() const noexcept { return m_shadow_distance; }
+
 private:
     nvrhi::TextureHandle m_depth_array;
     std::array<nvrhi::FramebufferHandle, kShadowCascadeCount> m_framebuffers;
     uint64_t m_revision{ 0 };
+
+    std::array<ShadowCascade, kShadowCascadeCount> m_cascades{};
+    float m_shadow_distance{ 0.0f };
+    bool m_has_cascades{ false };
 };
 
 } // namespace arti::rendering

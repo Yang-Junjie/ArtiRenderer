@@ -11,6 +11,7 @@ add_library(artirenderer STATIC
     src/pipeline/linear_pipeline.cpp
     src/pipeline/gbuffer_targets.cpp
     src/pipeline/render_target_set.cpp
+    src/pipeline/shadow_cascades.cpp
     src/pipeline/shadow_targets.cpp
     src/pipeline/passes/clear_scene_pass.cpp
     src/pipeline/passes/debug_line_pass.cpp
@@ -77,12 +78,22 @@ set(ARTIRENDERER_SHADERS
     src/shaders/irradiance.slang
     src/shaders/prefilter.slang
     src/shaders/brdf_lut.slang
+    src/shaders/shadow_depth.slang
     src/shaders/skybox.slang
     src/shaders/imgui.slang
     src/shaders/picking.slang
     src/shaders/present.slang
     src/shaders/tonemap.slang
 )
+# staging 函数要把这些文件列成显式依赖（改一个 .slang 就重新拷），而它在其他目录作用域里
+# 被调用，所以要 CACHE INTERNAL 的绝对路径。
+set(_arti_shader_files "")
+foreach(_arti_shader IN LISTS ARTIRENDERER_SHADERS)
+    list(APPEND _arti_shader_files "${CMAKE_CURRENT_SOURCE_DIR}/${_arti_shader}")
+endforeach()
+set(ARTIRENDERER_SHADER_FILES "${_arti_shader_files}" CACHE INTERNAL
+    "ArtiRenderer builtin Slang source files (absolute)")
+
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${ARTIRENDERER_SHADERS})
 target_sources(artirenderer PRIVATE ${ARTIRENDERER_SHADERS})
 set_source_files_properties(${ARTIRENDERER_SHADERS} PROPERTIES HEADER_FILE_ONLY TRUE)
@@ -93,6 +104,11 @@ set_source_files_properties(${ARTIRENDERER_SHADERS} PROPERTIES HEADER_FILE_ONLY 
 #
 # 着色器是运行期编译的，所以 .slang 必须跟着二进制走。shaderPath() 优先用这一份，
 # 没有才回落到 ARTIRENDERER_SHADER_DIR（源码树），见 src/detail/shader_paths.h。
+#
+# **走 stamp + custom target 而不是 POST_BUILD**：POST_BUILD 只在 target 重新链接时才跑，而改一个
+# .slang 不会导致重链（shader 是 HEADER_FILE_ONLY 的源文件）。那样 staged 的那份会悄悄变旧，
+# 而运行时优先用的正是它 —— 表现成「改了 shader 却没生效」，还会让人以为是 Slang 缓存。
+# stamp 把 shader 文件列成显式依赖，改哪个都会重新拷。
 function(artirenderer_stage_shaders target)
     if(NOT TARGET "${target}")
         message(FATAL_ERROR "Cannot stage shaders for unknown target: ${target}")
@@ -106,10 +122,17 @@ function(artirenderer_stage_shaders target)
         set(_arti_copy_directory copy_directory)
     endif()
 
-    add_custom_command(TARGET "${target}" POST_BUILD
+    set(_arti_stamp "${CMAKE_CURRENT_BINARY_DIR}/${target}_shaders.stamp")
+    add_custom_command(
+        OUTPUT "${_arti_stamp}"
         COMMAND "${CMAKE_COMMAND}" -E ${_arti_copy_directory}
             "${ARTIRENDERER_SHADER_SOURCE_DIR}"
             "$<TARGET_FILE_DIR:${target}>/shaders"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${_arti_stamp}"
+        DEPENDS ${ARTIRENDERER_SHADER_FILES}
+        COMMENT "Staging ArtiRenderer shaders next to ${target}"
         VERBATIM
     )
+    add_custom_target("${target}_stage_shaders" DEPENDS "${_arti_stamp}")
+    add_dependencies("${target}" "${target}_stage_shaders")
 endfunction()
