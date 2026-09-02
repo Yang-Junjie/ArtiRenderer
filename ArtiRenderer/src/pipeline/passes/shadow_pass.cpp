@@ -44,10 +44,16 @@ static_assert(sizeof(ShadowCascadeBuffer) == 64 * kShadowCascadeCount);
 //
 // 只取第一个：多方向光各带一套 cascade 会让显存和 pass 数翻倍。第二个想投影的方向光会被忽略，
 // 那件事值得说一声，否则场景里放两个太阳的人会以为是 bug。
-std::optional<LightDesc> shadowCastingLight(const RenderScene& scene) {
-    std::optional<LightDesc> found;
+struct ShadowLight {
+    LightDesc light;
+    uint32_t index{ 0 };
+};
+
+std::optional<ShadowLight> shadowCastingLight(const RenderScene& scene) {
+    std::optional<ShadowLight> found;
     uint32_t ignored = 0;
-    for (const auto& light: scene.lights) {
+    for (uint32_t index = 0; index < scene.lights.size(); ++index) {
+        const auto& light = scene.lights[index];
         if (light.type != LightType::Directional || !light.enabled || !light.casts_shadow) {
             continue;
         }
@@ -55,7 +61,7 @@ std::optional<LightDesc> shadowCastingLight(const RenderScene& scene) {
             ++ignored;
             continue;
         }
-        found = light;
+        found = ShadowLight{ light, index };
     }
     if (ignored > 0) {
         getLogChannel().warn("{} extra shadow-casting directional light(s) ignored; "
@@ -166,6 +172,15 @@ void ShadowPass::prepare(PassPrepareContext& context) {
         // 剪掉。near 已经按投影体的范围往回拉过了，这条是兜底 —— 少了它，某些角度下挡在光和
         // 物体之间的东西会突然不投影。
         raster_state.disableDepthClip();
+        // 消 shadow acne：**slope-scaled 为主，常数项为辅**。
+        //
+        // acne 的根因是「写进阴影图的深度」和「采样时算出的深度」对同一个表面点只相等到精度为止，
+        // 于是比较结果在两边随机跳；掠射角（表面几乎平行于光线）下一个 texel 覆盖的深度跨度最大，
+        // 所以偏移必须跟着斜率走 —— 这正是 slope-scaled 的定义。
+        //
+        // 常数项给得越大越容易换来 peter-panning（阴影和物体在接触处脱开），所以先调 slope、
+        // 常数项只给一点点。这两个数是**看画面调出来的**，换分辨率或换级数都可能要重调。
+        raster_state.setSlopeScaleDepthBias(2.0f).setDepthBias(1);
 
         nvrhi::RenderState render_state;
         render_state.setDepthStencilState(depth_state).setRasterState(raster_state);
@@ -198,8 +213,8 @@ void ShadowPass::record(PassRecordContext& context) {
     }
 
     auto& shadows = context.shadows();
-    const auto computed = detail::computeShadowCascades(scene.view, *light, scene.draws);
-    shadows.setCascades(computed.cascades, computed.shadow_distance);
+    const auto computed = detail::computeShadowCascades(scene.view, light->light, scene.draws);
+    shadows.setCascades(computed.cascades, computed.shadow_distance, light->index);
 
     ShadowCascadeBuffer buffer{};
     for (uint32_t index = 0; index < kShadowCascadeCount; ++index) {

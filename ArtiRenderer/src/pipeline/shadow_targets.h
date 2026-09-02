@@ -65,14 +65,18 @@ public:
 
     // 这一帧的 cascade 参数。ShadowPass 真的渲了才设；prepare() 每帧先清掉，
     // 所以「这一帧没阴影」和「上一帧的参数残留」不会混。
+    // light_index 是投影的那个光源在 RenderScene::lights 里的下标。存在这里而不是让
+    // DeferredLightingPass 自己再找一遍：那个“第一个方向光且 enabled 且 casts_shadow”的谓词
+    // 写两遁就会漂 —— 一旦两边挑中不同的灯，表现是“阴影的方向和光的方向不一致”。
     void setCascades(const std::array<ShadowCascade, kShadowCascadeCount>& cascades,
-            float shadow_distance) noexcept;
+            float shadow_distance, uint32_t light_index) noexcept;
     bool hasCascades() const noexcept { return m_has_cascades; }
     const std::array<ShadowCascade, kShadowCascadeCount>& cascades() const noexcept {
         return m_cascades;
     }
     // 阴影整体覆盖到多远，等于 min(相机远平面, light.shadow_distance)。
     float shadowDistance() const noexcept { return m_shadow_distance; }
+    uint32_t shadowLightIndex() const noexcept { return m_shadow_light_index; }
 
 private:
     nvrhi::TextureHandle m_depth_array;
@@ -81,6 +85,7 @@ private:
 
     std::array<ShadowCascade, kShadowCascadeCount> m_cascades{};
     float m_shadow_distance{ 0.0f };
+    uint32_t m_shadow_light_index{ 0 };
     bool m_has_cascades{ false };
 };
 

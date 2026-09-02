@@ -77,9 +77,10 @@ nvrhi::IFramebuffer& ShadowTargets::framebuffer(uint32_t cascade) const {
 }
 
 void ShadowTargets::setCascades(const std::array<ShadowCascade, kShadowCascadeCount>& cascades,
-        float shadow_distance) noexcept {
+        float shadow_distance, uint32_t light_index) noexcept {
     m_cascades = cascades;
     m_shadow_distance = shadow_distance;
+    m_shadow_light_index = light_index;
     m_has_cascades = true;
 }
 

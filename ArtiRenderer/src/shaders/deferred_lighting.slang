@@ -74,7 +74,75 @@ static const uint kLightSpot = 2;
 // 单元素缓冲 —— 空缓冲建不起 binding set，而 light_count 为 0 时循环一次都不进。
 [[vk::binding(10, 0)]] StructuredBuffer<GpuLight> lights;
 
+// 方向光的级联阴影。ShadowPass 每帧写好深度图和矩阵，这里采。
+//
+// 必须和 shadow_targets.h 的 kShadowCascadeCount 一致 —— Slang 要编译期常量。
+static const uint kShadowCascadeCount = 4;
+
+struct ShadowConstants
+{
+    // 世界空间 -> 第 i 级的光源裁剪空间。
+    float4x4 light_view_projection[kShadowCascadeCount];
+    // 每一级覆盖到相机前方多远（view-space 距离）。xyzw 依次对应四级。
+    float4 split_far;
+    // x = 阴影总距离，y = 淡出起点占总距离的比例，z = 一个 texel 在 UV 里的大小（1/分辨率），
+    // w = 投影的那个光源在 lights[] 里的下标（>= light_count 表示这一帧没有阴影）。
+    float4 params;
+};
+
+[[vk::binding(11, 0)]] ConstantBuffer<ShadowConstants> shadow_constants;
+// Texture2DArray：每一级一个 slice。用 array 而不是 atlas，所以每级的 UV 算法完全一样，
+// 只多一个 slice 下标 —— 见 shadow_targets.h 顶部的说明。
+[[vk::binding(12, 0)]] Texture2DArray<float> shadow_map;
+// 普通采样器 + 着色端手动比较，**不用 SamplerComparisonState**：比较采样器走反射绑定路径
+// 没验过，而手动 PCF 一定能过。以后想上硬件 PCF 只改这里和一个 sampler desc。
+[[vk::binding(13, 0)]] SamplerState shadow_sampler;
+
 static const float kPi = 3.14159265359;
+
+// 方向光的阴影可见性：1 = 全亮，0 = 全遮。
+//
+// 阶段 4 只采 cascade 0（最靠近相机的那一级）。cascade 选择在阶段 6 加 —— 分两步是为了让
+// 「采样对不对」和「选级对不对」不要同时成为未知量。
+//
+// UV 的 Y 用 `0.5 - 0.5 * ndc.y` 而不是 `0.5 + 0.5 * ndc.y`：本项目跟 NVRHI 的 D3D 式屏幕约定
+// （Vulkan 后端用负 viewport 高度），全屏三角形那边也是 `1 - uv.y * 2` 把 UV 映到 clip 的，
+// 这里是它的逆。搞反的表现是阴影上下颠倒 —— 一眼能看出来。
+//
+// 这一步**还没有 bias**，所以会有明显的 shadow acne（掠射角下的摩尔纹）。那是预期的，
+// 阶段 5 用 slope-scaled depth bias 修。
+float sampleDirectionalShadow(float3 world_position)
+{
+    const uint cascade = 0;
+
+    const float4 light_clip =
+            mul(shadow_constants.light_view_projection[cascade], float4(world_position, 1.0));
+    // 正交投影没有透视除法（w 恒为 1），除一下只是为了不依赖这个前提。
+    const float3 ndc = light_clip.xyz / light_clip.w;
+
+    // 落在这一级之外就当没有阴影。深度超出 [0,1] 同理 —— 那说明它在光锥的前后之外。
+    const float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (any(uv < 0.0) || any(uv > 1.0) || ndc.z < 0.0 || ndc.z > 1.0)
+    {
+        return 1.0;
+    }
+
+    // 3x3 PCF。手动比较再取平均，硬件比较采样器见绑定处的说明。
+    const float texel = shadow_constants.params.z;
+    float lit = 0.0;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            const float2 offset = float2(float(x), float(y)) * texel;
+            const float occluder =
+                    shadow_map.SampleLevel(shadow_sampler, float3(uv + offset, float(cascade)), 0.0);
+            // 存的深度更小 = 那里有个更靠近光源的东西挡着。
+            lit += ndc.z <= occluder ? 1.0 : 0.0;
+        }
+    }
+    return lit / 9.0;
+}
 
 struct VertexOutput
 {
@@ -263,8 +331,16 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         // 金属没有漫反射；(1 - fresnel) 是能量守恒 —— 反射掉的那部分不再进入次表面。
         const float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / kPi;
 
+        // 只有被 ShadowPass 选中的那个方向光有阴影图。下标由 ShadowTargets 传过来，
+        // 不在这边重新推一遍「哪个灯投影」—— 两处各推一次就会漂。
+        float shadow = 1.0;
+        if (type == kLightDirectional && index == uint(shadow_constants.params.w))
+        {
+            shadow = sampleDirectionalShadow(world_position);
+        }
+
         const float3 radiance = light.color_intensity.rgb * light.color_intensity.a;
-        direct += (diffuse + specular) * radiance * nol * attenuation;
+        direct += (diffuse + specular) * radiance * nol * attenuation * shadow;
     }
 
     // 环境项。有 IBL 就走 split-sum，没有就退回常数环境光。

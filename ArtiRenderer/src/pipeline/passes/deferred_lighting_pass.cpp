@@ -101,6 +101,33 @@ GpuLight toGpuLight(const LightDesc& light) {
     return gpu;
 }
 
+// 阴影的常量。单独一个 UBO 而不是塞进 LightingConstants：那个结构已经 144 字节且带
+// static_assert，加四个矩阵会让它变成 400+ 字节；而且阴影参数和「这一帧怎么呈现」不是一回事。
+struct ShadowConstantsBuffer {
+    std::array<std::array<float, 16>, kShadowCascadeCount> light_view_projection{};
+    // 每级覆盖到多远（view-space 距离），xyzw 对应四级。
+    std::array<float, 4> split_far{};
+    // x = 阴影总距离，y = 淡出起点比例，z = 一个 texel 在 UV 里的大小，
+    // w = 投影光源在**GPU 光源缓冲**里的下标（不是 RenderScene::lights 的下标，见 record()）。
+    std::array<float, 4> params{};
+};
+
+static_assert(std::is_standard_layout_v<ShadowConstantsBuffer>);
+static_assert(sizeof(ShadowConstantsBuffer) == 64 * kShadowCascadeCount + 32);
+
+// Texture2DArray 的绑定项。NvrhiBindingResource::Texture 默认不填维度，对一张 array
+// 纹理必须显式给，否则 nvrhi 会按 2D 建 SRV。
+arti::renderer::vulkan::NvrhiBindingResource shadowMapBinding(nvrhi::ITexture& texture) {
+    auto resource = arti::renderer::vulkan::NvrhiBindingResource::Texture("shadow_map", texture);
+    resource.dimension = nvrhi::TextureDimension::Texture2DArray;
+    return resource;
+}
+
+// 「这一帧没有阴影」的哨兵。着色端拿它和光源下标比，永远不相等 —— 比多传一个 bool 省一个字段。
+constexpr float kNoShadowLight = 1e9f;
+
+// 淡出起点，占总距离的比例。拄 Godot 的 fade_start。阶段 6 才真正用上。
+constexpr float kShadowFadeStart = 0.8f;
 } // namespace
 
 struct DeferredLightingPass::Impl {
@@ -118,6 +145,11 @@ struct DeferredLightingPass::Impl {
     nvrhi::FramebufferInfo pipeline_framebuffer_info;
 
     nvrhi::BufferHandle constants;
+    nvrhi::BufferHandle shadow_constants;
+    // 阴影图的采样器：**linear + clamp**。linear 是为了 PCF 的九个采样点自带一点
+    // 硬件插值（边缘更平）；clamp 是为了越界时不会绕回到另一侧—— 不过越界已经在
+    // 着色端先判掉了，这条是兵底。
+    nvrhi::SamplerHandle shadow_sampler;
 
     // 光源缓冲每个 frame slot 一份，照 ImGuiPass / DebugLinePass 的形状：多帧在飞的时候，
     // 下一帧的 writeBuffer 会撞上上一帧还在读的那份（WAR）。自动状态跟踪会插 barrier 保正确，
@@ -133,6 +165,7 @@ struct DeferredLightingPass::Impl {
         // 任一发生就要重建。初值取 max 是为了第一次一定不相等。
         uint64_t bound_gbuffer_revision{ std::numeric_limits<uint64_t>::max() };
         uint64_t bound_environment_revision{ std::numeric_limits<uint64_t>::max() };
+        uint64_t bound_shadow_revision{ std::numeric_limits<uint64_t>::max() };
         nvrhi::IBuffer* bound_lights{ nullptr };
     };
     std::vector<FrameSlot> frame_slots;
@@ -176,8 +209,10 @@ struct DeferredLightingPass::Impl {
         auto& targets = context.targets();
         auto& gbuffer = context.gbuffer();
         const auto& environment = context.environment();
+        auto& shadows = context.shadows();
         if (slot.binding_set && slot.bound_gbuffer_revision == gbuffer.revision() &&
                 slot.bound_environment_revision == environment.revision &&
+                slot.bound_shadow_revision == shadows.revision() &&
                 slot.bound_lights == slot.lights.Get()) {
             return;
         }
@@ -204,6 +239,13 @@ struct DeferredLightingPass::Impl {
             arti::renderer::vulkan::NvrhiBindingResource::Sampler("ibl_sampler",
                     *environment.sampler),
             arti::renderer::vulkan::NvrhiBindingResource::Buffer("lights", *slot.lights),
+            arti::renderer::vulkan::NvrhiBindingResource::Buffer("shadow_constants",
+                    *shadow_constants),
+            // Texture2DArray 得显式告诉绑定层维度：反射看到的是数组类型，但 NvrhiBindingResource
+            // 默认按 Unknown 走，维度对不上时建出来的 SRV 是错的。
+            shadowMapBinding(shadows.depthArray()),
+            arti::renderer::vulkan::NvrhiBindingResource::Sampler("shadow_sampler",
+                    *shadow_sampler),
         };
         slot.binding_set = arti::renderer::vulkan::createNvrhiBindingSet(device, reflection, 0,
                 *binding_layout, resources);
@@ -212,6 +254,7 @@ struct DeferredLightingPass::Impl {
         }
         slot.bound_gbuffer_revision = gbuffer.revision();
         slot.bound_environment_revision = environment.revision;
+        slot.bound_shadow_revision = shadows.revision();
         slot.bound_lights = slot.lights.Get();
     }
 };
@@ -249,6 +292,18 @@ void DeferredLightingPass::prepare(PassPrepareContext& context) {
             throw std::runtime_error("NVRHI failed to create the deferred lighting sampler.");
         }
 
+        // 阴影采样器：linear + clamp。linear 让 PCF 的九个采样点自带一点硬件插值，
+        // 边缘比纯 point 平一些。采的是原始深度而不是比较结果，所以插值插的是深度值
+        // —— 严格说不对（深度不能线性插），但在 3x3 平均里的影响比它带来的平滑小。
+        // 真要严谨得上硬件比较采样器（SamplerComparisonState）。
+        nvrhi::SamplerDesc shadow_sampler_desc;
+        shadow_sampler_desc.setAllFilters(true).setAllAddressModes(
+                nvrhi::SamplerAddressMode::ClampToEdge);
+        m_impl->shadow_sampler = device.createSampler(shadow_sampler_desc);
+        if (!m_impl->shadow_sampler) {
+            throw std::runtime_error("NVRHI failed to create the shadow sampler.");
+        }
+
         // 刻意**不用** volatile：binding layout 是从 shader 反射来的，反射看不到 buffer 是不是
         // volatile，只能发出普通 ConstantBuffer，而 BindingSetItem 会从 buffer 自动判定成
         // VolatileConstantBuffer，两者不一致 Vulkan 会报 descriptor type 错误。
@@ -261,6 +316,16 @@ void DeferredLightingPass::prepare(PassPrepareContext& context) {
         if (!m_impl->constants) {
             throw std::runtime_error(
                     "NVRHI failed to create the deferred lighting constant buffer.");
+        }
+
+        nvrhi::BufferDesc shadow_desc;
+        shadow_desc.setByteSize(sizeof(ShadowConstantsBuffer))
+                .setIsConstantBuffer(true)
+                .setDebugName("ArtiRenderer ShadowConstants")
+                .enableAutomaticStateTracking(nvrhi::ResourceStates::ConstantBuffer);
+        m_impl->shadow_constants = device.createBuffer(shadow_desc);
+        if (!m_impl->shadow_constants) {
+            throw std::runtime_error("NVRHI failed to create the shadow constant buffer.");
         }
     }
 
@@ -297,11 +362,21 @@ void DeferredLightingPass::record(PassRecordContext& context) {
     auto& commands = context.commands();
 
     // 收集本帧的光源。禁用的在这里就滤掉 —— 传上去再判断只是浪费带宽和一次分支。
+    // GPU 光源缓冲只装 enabled 的灯，所以它的下标和 RenderScene::lights 的下标**不一样**。
+    // ShadowTargets 记的是后者，这里边过滤边把它换算成前者 —— 漏了这一步的表现是
+    // 「阴影出现在另一个灯的方向上」，而只有一个灯时又恰好正确，非常难查。
+    auto& shadows = context.shadows();
+    float shadow_light_slot = kNoShadowLight;
     m_impl->lights.clear();
-    for (const auto& light: scene.lights) {
-        if (light.enabled) {
-            m_impl->lights.push_back(toGpuLight(light));
+    for (std::size_t index = 0; index < scene.lights.size(); ++index) {
+        const auto& light = scene.lights[index];
+        if (!light.enabled) {
+            continue;
         }
+        if (shadows.hasCascades() && index == shadows.shadowLightIndex()) {
+            shadow_light_slot = static_cast<float>(m_impl->lights.size());
+        }
+        m_impl->lights.push_back(toGpuLight(light));
     }
     auto& slot = m_impl->frame_slots.at(context.frameSlotIndex());
     // 必须排在 ensureBindingSet 之前：扩容会换掉缓冲句柄，这个 slot 的绑定集得跟着重建。
@@ -338,6 +413,24 @@ void DeferredLightingPass::record(PassRecordContext& context) {
             sizeof(constants.background_color));
 
     commands.writeBuffer(m_impl->constants, &constants, sizeof(constants));
+
+    // 阴影常量。没有阴影的帧也要写：绑定集里那个 buffer 一直在，不写就残留上一帧的矩阵，
+    // 而 params.w 的哨兵已经让着色端不去用它了 —— 但留着旧数据没有好处。
+    ShadowConstantsBuffer shadow_buffer{};
+    shadow_buffer.params = { 0.0f, kShadowFadeStart,
+        1.0f / static_cast<float>(kShadowMapResolution), kNoShadowLight };
+    if (shadows.hasCascades()) {
+        for (uint32_t index = 0; index < kShadowCascadeCount; ++index) {
+            const auto& cascade = shadows.cascades()[index];
+            std::memcpy(shadow_buffer.light_view_projection[index].data(),
+                    glm::value_ptr(cascade.light_view_projection),
+                    sizeof(shadow_buffer.light_view_projection[index]));
+            shadow_buffer.split_far[index] = cascade.split_far;
+        }
+        shadow_buffer.params[0] = shadows.shadowDistance();
+        shadow_buffer.params[3] = shadow_light_slot;
+    }
+    commands.writeBuffer(m_impl->shadow_constants, &shadow_buffer, sizeof(shadow_buffer));
     // 只写用到的那一段，缓冲余下的容量保持原样 —— light_count 之外的元素着色器读不到。
     if (!m_impl->lights.empty()) {
         commands.writeBuffer(slot.lights, m_impl->lights.data(),
