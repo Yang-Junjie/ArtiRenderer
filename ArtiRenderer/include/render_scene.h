@@ -14,6 +14,17 @@ struct RenderView {
     glm::mat4 view{ 1.0f };
     glm::mat4 projection{ 1.0f };
     glm::vec3 camera_position{ 0.0f };
+
+    // 相机的近远平面。级联阴影要按距离切视锥，所以必须拿到这两个标量。
+    //
+    // 单独存而不是从 projection 反解：反解一个透视矩阵的 near / far 是能做的，但公式对
+    // 「正交还是透视」「ZO 还是 NO 深度约定」都敏感，而生产者手上本来就有原值 —— 让每个
+    // 消费者去反解，等于把一个脆弱的推导复制好几份。
+    //
+    // 填它的地方有两处（场景相机的抽取、编辑器相机），**漏一处的表现是「编辑器里阴影对、
+    // Play 模式里不对」**，而两边单独看都像是对的。
+    float near_plane{ 0.1f };
+    float far_plane{ 100.0f };
 };
 
 struct DrawItem {
