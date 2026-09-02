@@ -110,10 +110,12 @@ struct ShadowConstantsBuffer {
     // x = 阴影总距离，y = 淡出起点比例，z = 一个 texel 在 UV 里的大小，
     // w = 投影光源在**GPU 光源缓冲**里的下标（不是 RenderScene::lights 的下标，见 record()）。
     std::array<float, 4> params{};
+    // xyz = 相机前向（单位向量），选 cascade 用。w 未用。
+    std::array<float, 4> camera_forward{};
 };
 
 static_assert(std::is_standard_layout_v<ShadowConstantsBuffer>);
-static_assert(sizeof(ShadowConstantsBuffer) == 64 * kShadowCascadeCount + 32);
+static_assert(sizeof(ShadowConstantsBuffer) == 64 * kShadowCascadeCount + 48);
 
 // Texture2DArray 的绑定项。NvrhiBindingResource::Texture 默认不填维度，对一张 array
 // 纹理必须显式给，否则 nvrhi 会按 2D 建 SRV。
@@ -429,6 +431,12 @@ void DeferredLightingPass::record(PassRecordContext& context) {
         }
         shadow_buffer.params[0] = shadows.shadowDistance();
         shadow_buffer.params[3] = shadow_light_slot;
+        // 相机前向：view 是世界到相机，它的逆的第三列是 +Z，相机看向 -Z，所以取反。
+        // 和 computeShadowCascades 里的取法保持一致 —— 两处不一致会让选级和分割距离对不上。
+        const glm::mat4 camera_world = glm::inverse(scene.view.view);
+        const glm::vec3 forward = -glm::vec3{ camera_world[2] };
+        std::memcpy(shadow_buffer.camera_forward.data(), glm::value_ptr(forward),
+                sizeof(float) * 3);
     }
     commands.writeBuffer(m_impl->shadow_constants, &shadow_buffer, sizeof(shadow_buffer));
     // 只写用到的那一段，缓冲余下的容量保持原样 —— light_count 之外的元素着色器读不到。

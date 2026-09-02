@@ -88,6 +88,9 @@ struct ShadowConstants
     // x = 阴影总距离，y = 淡出起点占总距离的比例，z = 一个 texel 在 UV 里的大小（1/分辨率），
     // w = 投影的那个光源在 lights[] 里的下标（>= light_count 表示这一帧没有阴影）。
     float4 params;
+    // xyz = 相机前向（单位向量）。选 cascade 要「沿前向的距离」，而 LightingConstants 里只有
+    // 相机位置和一个逆 view-projection —— 从后者反解前向又绕又脆，直接传。w 未用。
+    float4 camera_forward;
 };
 
 [[vk::binding(11, 0)]] ConstantBuffer<ShadowConstants> shadow_constants;
@@ -102,18 +105,34 @@ static const float kPi = 3.14159265359;
 
 // 方向光的阴影可见性：1 = 全亮，0 = 全遮。
 //
-// 阶段 4 只采 cascade 0（最靠近相机的那一级）。cascade 选择在阶段 6 加 —— 分两步是为了让
-// 「采样对不对」和「选级对不对」不要同时成为未知量。
-//
 // UV 的 Y 用 `0.5 - 0.5 * ndc.y` 而不是 `0.5 + 0.5 * ndc.y`：本项目跟 NVRHI 的 D3D 式屏幕约定
 // （Vulkan 后端用负 viewport 高度），全屏三角形那边也是 `1 - uv.y * 2` 把 UV 映到 clip 的，
 // 这里是它的逆。搞反的表现是阴影上下颠倒 —— 一眼能看出来。
-//
-// 这一步**还没有 bias**，所以会有明显的 shadow acne（掠射角下的摩尔纹）。那是预期的，
-// 阶段 5 用 slope-scaled depth bias 修。
 float sampleDirectionalShadow(float3 world_position)
 {
-    const uint cascade = 0;
+    // 选级用的深度是**沿相机前向的距离**，不是到相机的径向距离。前者等于 -(view * world).z，
+    // 也正是 computeShadowCascades 里算分割距离用的那个量；用 length(camera - world) 会让屏幕
+    // 边缘提前跳级 —— 同样的前向距离，边缘的径向距离更大。
+    const float view_depth = dot(world_position - lighting_constants.camera_position.xyz,
+            shadow_constants.camera_forward.xyz);
+
+    const float shadow_distance = shadow_constants.params.x;
+    // 超出阴影距离就没有阴影。
+    if (view_depth >= shadow_distance)
+    {
+        return 1.0;
+    }
+
+    // 选第一个覆盖到这个深度的 cascade。都覆盖不到（浮点边界）就用最后一级兜底。
+    uint cascade = kShadowCascadeCount - 1;
+    for (uint level = 0; level < kShadowCascadeCount; ++level)
+    {
+        if (view_depth <= shadow_constants.split_far[level])
+        {
+            cascade = level;
+            break;
+        }
+    }
 
     const float4 light_clip =
             mul(shadow_constants.light_view_projection[cascade], float4(world_position, 1.0));
@@ -141,7 +160,13 @@ float sampleDirectionalShadow(float3 world_position)
             lit += ndc.z <= occluder ? 1.0 : 0.0;
         }
     }
-    return lit / 9.0;
+    const float shadow = lit / 9.0;
+
+    // 远端淡出：从 fade_start 开始把阴影往 1 抹，到 shadow_distance 正好抹平。不做的话最后一级
+    // 的边界上会有一条硬边，而那条边会随相机移动扫过场景 —— 比没有阴影更显眼。
+    const float fade_start = shadow_distance * shadow_constants.params.y;
+    const float fade = saturate((view_depth - fade_start) / max(shadow_distance - fade_start, 1e-4));
+    return lerp(shadow, 1.0, fade);
 }
 
 struct VertexOutput
