@@ -10,6 +10,7 @@
 #include "passes/imgui_pass.h"
 #include "passes/picking_pass.h"
 #include "passes/present_pass.h"
+#include "passes/shadow_pass.h"
 #include "passes/sky_pass.h"
 #include "passes/tonemap_pass.h"
 
@@ -69,12 +70,15 @@ void LinearPipeline::prepare(arti::renderer::RenderPassPrepareContext& context) 
             settings.scene_target_height);
     // G-Buffer 紧跟其后：它的尺寸和深度附件都从 m_targets 来，靠它的 revision 判断要不要重建。
     m_gbuffer.prepare(context.device(), m_targets);
+    // 阴影图不依赖 m_targets（分辨率固定），所以只是一次性建好。
+    m_shadows.prepare(context.device());
 
     for (const auto& entry: m_passes) {
         if (!entry.pass->isEnabled(*m_frame)) {
             continue;
         }
-        PassPrepareContext pass_context{ context, *m_frame, m_targets, m_gbuffer, m_environment };
+        PassPrepareContext pass_context{ context, *m_frame, m_targets, m_gbuffer, m_environment,
+            m_shadows };
         entry.pass->prepare(pass_context);
     }
 }
@@ -90,7 +94,8 @@ void LinearPipeline::record(arti::renderer::RenderPassContext& context) {
             continue;
         }
         commands.beginMarker(entry.marker_label.c_str());
-        PassRecordContext pass_context{ context, *m_frame, m_targets, m_gbuffer, m_environment };
+        PassRecordContext pass_context{ context, *m_frame, m_targets, m_gbuffer, m_environment,
+            m_shadows };
         entry.pass->record(pass_context);
         commands.endMarker();
     }
@@ -110,6 +115,9 @@ std::unique_ptr<Pipeline> createDeferredPipeline(arti::renderer::RenderDevice& d
     // IBL 烘焙排在最前面：它是纯 compute，产物是 Lighting 和 Sky 的输入，自己不依赖任何目标。
     // 按环境贴图句柄缓存，所以只有换贴图的那一帧真的烘。
     pipeline->addPass(LinearStage::EnvironmentBake, std::make_unique<EnvironmentBakePass>());
+    // 阴影图排在 Clear 之前：它只写自己那张深度、不碰场景目标，而且产物是 Lighting 的输入。
+    // 目前是空壳（isEnabled 恒 false），装上只为了先把接缝走通。
+    pipeline->addPass(LinearStage::Shadow, std::make_unique<ShadowPass>());
     pipeline->addPass(LinearStage::Clear, std::make_unique<ClearScenePass>());
     pipeline->addPass(LinearStage::GBuffer, std::make_unique<GBufferPass>());
     pipeline->addPass(LinearStage::Lighting, std::make_unique<DeferredLightingPass>());
@@ -128,8 +136,8 @@ std::unique_ptr<Pipeline> createDeferredPipeline(arti::renderer::RenderDevice& d
     // 也不用为了开关 UI 去换一条管线。
     pipeline->addPass(LinearStage::UI, std::make_unique<ImGuiPass>());
 
-    getLogChannel().info("Created deferred pipeline (Bake -> Clear -> GBuffer -> Lighting -> "
-                         "Sky -> Tonemap -> Debug -> Output -> UI)");
+    getLogChannel().info("Created deferred pipeline (Bake -> Shadow -> Clear -> GBuffer -> "
+                         "Lighting -> Sky -> Tonemap -> Debug -> Output -> UI)");
     return pipeline;
 }
 

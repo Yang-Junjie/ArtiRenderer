@@ -14,6 +14,16 @@ enum class LinearStage : uint8_t {
     // 纯 compute，不碰任何 framebuffer：IBL 烘焙就在这里。排在最前面是因为它的产物
     // （irradiance / prefiltered / BRDF LUT）是 Lighting 的输入，而它自己不依赖任何渲染目标。
     EnvironmentBake,
+    // 方向光的级联阴影深度图。和 EnvironmentBake 同一个性质：产物是 Lighting 的输入，自己
+    // 不依赖任何场景渲染目标（阴影图分辨率固定，和场景分辨率无关）。
+    //
+    // 排在 Clear 之前而不是之后：这样「谁清场景目标」仍然只有 ClearScenePass 一处。阴影图
+    // 自己的深度由 ShadowPass 自己清 —— 它只在有投影光源的帧才有内容，让 ClearScenePass
+    // 去管它就成了隐式耦合。
+    //
+    // 它要重画一遍几何（每级一遍），所以在几何 pass 里算「排最前面的那个」；但它不写
+    // G-Buffer、不写 SceneDepth，和 GBuffer 阶段没有资源交接。
+    Shadow,
     Clear,
     // 几何写入：把材质属性编码进 G-Buffer + SceneDepth，一行光照都不算。
     // 拆 pass 的依据是 **G-Buffer 编码**而不是材质类型 —— 延迟管线里着色模型已经统一到
@@ -49,6 +59,8 @@ constexpr const char* linearStageName(LinearStage stage) noexcept {
     switch (stage) {
         case LinearStage::EnvironmentBake:
             return "EnvironmentBake";
+        case LinearStage::Shadow:
+            return "Shadow";
         case LinearStage::Clear:
             return "Clear";
         case LinearStage::GBuffer:

@@ -17,12 +17,13 @@ const detail::GPUMesh& requireMesh(const FrameContext& frame, MeshHandle handle)
 
 PassPrepareContext::PassPrepareContext(arti::renderer::RenderPassPrepareContext& rhi,
         FrameContext& frame, RenderTargetSet& targets, GBufferTargets& gbuffer,
-        EnvironmentResources& environment) noexcept
+        EnvironmentResources& environment, ShadowTargets& shadows) noexcept
         : m_rhi(&rhi),
           m_frame(&frame),
           m_targets(&targets),
           m_gbuffer(&gbuffer),
-          m_environment(&environment) {}
+          m_environment(&environment),
+          m_shadows(&shadows) {}
 
 nvrhi::IDevice& PassPrepareContext::device() const noexcept { return m_rhi->device(); }
 
@@ -36,14 +37,17 @@ GBufferTargets& PassPrepareContext::gbuffer() const noexcept { return *m_gbuffer
 
 EnvironmentResources& PassPrepareContext::environment() const noexcept { return *m_environment; }
 
+ShadowTargets& PassPrepareContext::shadows() const noexcept { return *m_shadows; }
+
 PassRecordContext::PassRecordContext(arti::renderer::RenderPassContext& rhi, FrameContext& frame,
         RenderTargetSet& targets, GBufferTargets& gbuffer,
-        EnvironmentResources& environment) noexcept
+        EnvironmentResources& environment, ShadowTargets& shadows) noexcept
         : m_rhi(&rhi),
           m_frame(&frame),
           m_targets(&targets),
           m_gbuffer(&gbuffer),
-          m_environment(&environment) {}
+          m_environment(&environment),
+          m_shadows(&shadows) {}
 
 nvrhi::IDevice& PassRecordContext::device() const noexcept { return m_rhi->device(); }
 
@@ -60,6 +64,8 @@ RenderTargetSet& PassRecordContext::targets() const noexcept { return *m_targets
 GBufferTargets& PassRecordContext::gbuffer() const noexcept { return *m_gbuffer; }
 
 EnvironmentResources& PassRecordContext::environment() const noexcept { return *m_environment; }
+
+ShadowTargets& PassRecordContext::shadows() const noexcept { return *m_shadows; }
 
 nvrhi::IBuffer& PassRecordContext::vertexBuffer(MeshHandle mesh) const {
     return m_rhi->buffer(requireMesh(*m_frame, mesh).vertex_buffer);

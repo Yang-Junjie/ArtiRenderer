@@ -6,6 +6,7 @@
 #include "linear_stage.h"
 #include "pipeline.h"
 #include "render_target_set.h"
+#include "shadow_targets.h"
 
 #include <memory>
 #include <string>
@@ -51,6 +52,9 @@ private:
     // m_environment，光照和天空读。
     GBufferTargets m_gbuffer;
     EnvironmentResources m_environment;
+    // 级联阴影的深度图。和上面两个同一个角色，但尺寸是固定的（和场景分辨率无关），
+    // 所以建一次就够，prepare() 是幂等的。
+    ShadowTargets m_shadows;
     // 借用指针，所有权在 m_passes 里。装配时记下来，省得每次取结果都去遍历找。
     PickingPass* m_picking_pass{ nullptr };
     // render() 每帧设好，prepare()/record() 回调里用。

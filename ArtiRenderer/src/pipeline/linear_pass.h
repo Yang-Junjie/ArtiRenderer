@@ -4,6 +4,7 @@
 #include "frame_context.h"
 #include "gbuffer_targets.h"
 #include "render_target_set.h"
+#include "shadow_targets.h"
 
 #include <cstddef>
 #include <string_view>
@@ -15,7 +16,7 @@ class PassPrepareContext {
 public:
     PassPrepareContext(arti::renderer::RenderPassPrepareContext& rhi, FrameContext& frame,
             RenderTargetSet& targets, GBufferTargets& gbuffer,
-            EnvironmentResources& environment) noexcept;
+            EnvironmentResources& environment, ShadowTargets& shadows) noexcept;
 
     nvrhi::IDevice& device() const noexcept;
 
@@ -29,6 +30,8 @@ public:
     GBufferTargets& gbuffer() const noexcept;
     // IBL 的烘焙产物。EnvironmentBakePass 写，下游读。
     EnvironmentResources& environment() const noexcept;
+    // 级联阴影的深度图。ShadowPass 写，DeferredLightingPass 读。
+    ShadowTargets& shadows() const noexcept;
 
 private:
     arti::renderer::RenderPassPrepareContext* m_rhi{ nullptr };
@@ -36,6 +39,7 @@ private:
     RenderTargetSet* m_targets{ nullptr };
     GBufferTargets* m_gbuffer{ nullptr };
     EnvironmentResources* m_environment{ nullptr };
+    ShadowTargets* m_shadows{ nullptr };
 };
 
 
@@ -43,7 +47,7 @@ class PassRecordContext {
 public:
     PassRecordContext(arti::renderer::RenderPassContext& rhi, FrameContext& frame,
             RenderTargetSet& targets, GBufferTargets& gbuffer,
-            EnvironmentResources& environment) noexcept;
+            EnvironmentResources& environment, ShadowTargets& shadows) noexcept;
 
     nvrhi::IDevice& device() const noexcept;
     nvrhi::ICommandList& commands() const noexcept;
@@ -58,6 +62,7 @@ public:
     RenderTargetSet& targets() const noexcept;
     GBufferTargets& gbuffer() const noexcept;
     EnvironmentResources& environment() const noexcept;
+    ShadowTargets& shadows() const noexcept;
 
     nvrhi::IBuffer& vertexBuffer(MeshHandle mesh) const;
     nvrhi::IBuffer& indexBuffer(MeshHandle mesh) const;
@@ -69,6 +74,7 @@ private:
     RenderTargetSet* m_targets{ nullptr };
     GBufferTargets* m_gbuffer{ nullptr };
     EnvironmentResources* m_environment{ nullptr };
+    ShadowTargets* m_shadows{ nullptr };
 };
 
 

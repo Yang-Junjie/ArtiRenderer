@@ -11,6 +11,7 @@ add_library(artirenderer STATIC
     src/pipeline/linear_pipeline.cpp
     src/pipeline/gbuffer_targets.cpp
     src/pipeline/render_target_set.cpp
+    src/pipeline/shadow_targets.cpp
     src/pipeline/passes/clear_scene_pass.cpp
     src/pipeline/passes/debug_line_pass.cpp
     src/pipeline/passes/deferred_lighting_pass.cpp
@@ -20,6 +21,7 @@ add_library(artirenderer STATIC
     src/pipeline/passes/imgui_pass.cpp
     src/pipeline/passes/picking_pass.cpp
     src/pipeline/passes/present_pass.cpp
+    src/pipeline/passes/shadow_pass.cpp
     src/pipeline/passes/sky_pass.cpp
     src/pipeline/passes/tonemap_pass.cpp
 )
