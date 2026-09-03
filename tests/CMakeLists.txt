@@ -10,6 +10,7 @@ endfunction()
 artirenderer_add_test(texture_desc_test texture_desc_test.cpp)
 artirenderer_add_test(handle_test handle_test.cpp)
 artirenderer_add_test(aabb_test aabb_test.cpp)
+artirenderer_add_test(frustum_test frustum_test.cpp)
 
 # 冒烟测试：无窗口模式跑几帧，确认 Application 生命周期没有崩。
 if(ARTIRENDERER_BUILD_SAMPLES)
