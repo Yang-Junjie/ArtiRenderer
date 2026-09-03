@@ -73,11 +73,18 @@ ShadowCascadeResult computeShadowCascades(const RenderView& view, const LightDes
     struct LightSpaceBounds {
         glm::vec3 min{ 0.0f };
         glm::vec3 max{ 0.0f };
+        bool empty{ true };
     };
     std::vector<LightSpaceBounds> caster_bounds;
     caster_bounds.reserve(draws.size());
     for (const auto& draw: draws) {
         LightSpaceBounds bounds;
+        // 空盒八个角是无意义的（min > max），变换过去会污染后面的 min_z / max_z。
+        // 这种 draw 当「不知道它在哪」处理：不参与 near/far 收紧，四级 cascade 都当可见。
+        if (draw.world_bounds.isEmpty()) {
+            caster_bounds.push_back(bounds);
+            continue;
+        }
         bool first = true;
         // AABB 的八个角都要变换：光空间是旋转过的，只变换 min/max 两个点会得到错的盒子。
         for (int corner = 0; corner < 8; ++corner) {
@@ -91,7 +98,19 @@ ShadowCascadeResult computeShadowCascades(const RenderView& view, const LightDes
             bounds.max = first ? light_space : glm::max(bounds.max, light_space);
             first = false;
         }
+        bounds.empty = false;
         caster_bounds.push_back(bounds);
+    }
+
+    // 默认 0（这一级不画）。空盒在下面单独置 1。
+    result.caster_visible.assign(kShadowCascadeCount * draws.size(), 0);
+    for (std::size_t draw_index = 0; draw_index < caster_bounds.size(); ++draw_index) {
+        if (!caster_bounds[draw_index].empty) {
+            continue;
+        }
+        for (uint32_t cascade = 0; cascade < kShadowCascadeCount; ++cascade) {
+            result.caster_visible[cascade * draws.size() + draw_index] = 1;
+        }
     }
 
     float split_near = view.near_plane;
@@ -153,15 +172,24 @@ ShadowCascadeResult computeShadowCascades(const RenderView& view, const LightDes
         // 比拿整个场景 AABB 的 Z 范围紧得多（MSDN 那份文档里「naive」的做法就是后者，
         // 最坏情况能差四倍），而又比正经的「把场景几何裁剪到光锥四个侧面」便宜得多。
         // near 必须比这一级的盒子更靠光源一侧 —— 挡在中间的物体也得画进去，否则它不投影。
+        //
+        // **Z 方向之所以不用再判一遍，是因为 near / far 就是按 XY 重叠的投射体撑开的。**
+        // 谁把 near / far 改成固定值（比如只按 cascade 球），这条剔除就会把合法投射体剔掉 ——
+        // 那些东西在 XY 上重叠、Z 上超出 cascade 球，但它们的影子必须画进这一级。
         float min_z = light_center.z - radius;
         float max_z = light_center.z + radius;
-        for (const auto& bounds: caster_bounds) {
+        for (std::size_t draw_index = 0; draw_index < caster_bounds.size(); ++draw_index) {
+            const auto& bounds = caster_bounds[draw_index];
+            if (bounds.empty) {
+                continue;
+            }
             if (bounds.max.x < min_x || bounds.min.x > max_x || bounds.max.y < min_y ||
                     bounds.min.y > max_y) {
                 continue;
             }
             min_z = std::min(min_z, bounds.min.z);
             max_z = std::max(max_z, bounds.max.z);
+            result.caster_visible[index * draws.size() + draw_index] = 1;
         }
 
         // 光空间是右手系、视线朝 -Z，所以「离光源更近」= z 更大。正交的 near / far 取的是

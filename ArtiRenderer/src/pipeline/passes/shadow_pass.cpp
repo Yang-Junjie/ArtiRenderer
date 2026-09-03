@@ -238,11 +238,17 @@ void ShadowPass::record(PassRecordContext& context) {
         nvrhi::ViewportState viewport;
         viewport.addViewportAndScissorRect(framebuffer_info.getViewport());
 
-        for (const auto& draw: scene.draws) {
+        for (std::size_t draw_index = 0; draw_index < scene.draws.size(); ++draw_index) {
+            const DrawItem& draw = scene.draws[draw_index];
             const auto resolved = detail::resolveDraw(context.frame(), draw);
-            // 跳过条件和 GBufferPass 逐条对齐：那边不画的东西屏幕上就不存在，这边要是画了，
-            // 就会投出一个没有本体的影子。加几何 pass（透明、蒙皮）时这个条件要跟着放宽。
+            // 跳过条件和 GBufferPass 逐条对齐（材质类型），但**可见性不是相机视锥**。
+            // 投射体可以完全在画面外而影子在画面内 —— 拿相机视锥剔阴影会让那些影子凭空消失，
+            // 而且只在特定相机角度下。这里读的是 computeShadowCascades 算好的光空间 XY 重叠。
             if (!resolved || resolved->material.type != MaterialType::PBR) {
+                continue;
+            }
+            if (!computed.isCasterVisible(index, draw_index)) {
+                ++context.frame().statistics().shadow_culled;
                 continue;
             }
 

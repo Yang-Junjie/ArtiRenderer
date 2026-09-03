@@ -3,6 +3,9 @@
 #include "shadow_targets.h"
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
 #include <glm/mat4x4.hpp>
 
@@ -22,6 +25,23 @@ namespace arti::rendering::detail {
 struct ShadowCascadeResult {
     std::array<ShadowCascade, kShadowCascadeCount> cascades{};
     float shadow_distance{ 0.0f };
+
+    // 每级 cascade 要画哪些投射体。打平存成 kShadowCascadeCount × draws.size()，
+    // 一次分配而不是四个 vector —— 反正长度是固定的，展开也没多复杂。
+    std::vector<uint8_t> caster_visible;
+
+    // cascade 级的投射体可见性。**这不是相机可见性** —— 投射体可以完全在画面外而影子在画面内，
+    // 拿相机视锥剔阴影会让那些影子凭空消失（而且只在特定相机角度下），见 .cpp 里的说明。
+    //
+    // 越界当可见，和 FrameContext::isVisible 同一个取向：兜底一律朝「多画一个」倒。
+    bool isCasterVisible(uint32_t cascade, std::size_t draw_index) const noexcept
+    {
+        const std::size_t stride = caster_visible.size() / kShadowCascadeCount;
+        if (stride == 0 || draw_index >= stride || cascade >= kShadowCascadeCount) {
+            return true;
+        }
+        return caster_visible[cascade * stride + draw_index] != 0;
+    }
 };
 
 ShadowCascadeResult computeShadowCascades(const RenderView& view, const LightDesc& light,

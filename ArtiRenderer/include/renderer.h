@@ -46,6 +46,10 @@ struct FrameStatistics {
     uint32_t draw_calls{ 0 };
     uint32_t submeshes{ 0 };
     uint32_t culled{ 0 };
+    // 四级 cascade 上被跳过的 draw 次数之和。一张图四级各画一次所以最大是 4 × submeshes。
+    // 和 culled 分开：culled 是相机视锥的账，shadow_culled 是光空间 XY 的账，两个数加起来
+    // 没有守恒式。
+    uint32_t shadow_culled{ 0 };
     bool rendered{ false };
 };
 
