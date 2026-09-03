@@ -97,12 +97,13 @@ std::vector<std::byte> makeCheckerTexels(uint32_t size)
 } // namespace
 
 BasicWindowLayer::BasicWindowLayer(bool enable_renderer, uint32_t frame_limit,
-        bool show_imgui_demo, bool editor_mode)
+        bool show_imgui_demo, bool editor_mode, bool vsync)
     : Layer("BasicWindowLayer")
     , m_enable_renderer(enable_renderer)
     , m_frame_limit(frame_limit)
     , m_show_demo_window(show_imgui_demo)
     , m_editor_mode(editor_mode)
+    , m_vsync(vsync)
 {}
 
 BasicWindowLayer::~BasicWindowLayer() = default;
@@ -119,6 +120,7 @@ void BasicWindowLayer::onAttach()
     auto surface_source = platform::createSDLVulkanSurfaceSource(app.getWindow());
     renderer::RenderDeviceCreateInfo device_info;
     device_info.application_name = "ArtiRenderer";
+    device_info.vsync = m_vsync;
     m_render_device = std::make_unique<renderer::RenderDevice>(
             app.getWindow(), std::move(surface_source), device_info);
 
@@ -248,6 +250,14 @@ void BasicWindowLayer::drawUI()
     ImGui::Text("output:     %ux%u", output.width, output.height);
 
     ImGui::SeparatorText("Present");
+    if (m_render_device) {
+        bool vsync = m_render_device->vsync();
+        if (ImGui::Checkbox("VSync", &vsync)) {
+            m_render_device->setVsync(vsync);
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted(renderer::toString(m_render_device->swapchainInfo().present_mode));
+    }
     // Direct：场景贴到 backbuffer，UI 盖在上面（停靠区的中央节点是透传的，所以场景照样看得见）。
     // Editor：场景留在 SceneColor，由下面那个 Viewport 面板显示。
     if (ImGui::Checkbox("Editor mode (scene into panel)", &m_editor_mode)) {

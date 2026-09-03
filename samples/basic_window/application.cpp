@@ -9,7 +9,7 @@
 namespace arti::core {
 
 // 由 artichoco_core 的 entry_point.cpp 调用。
-// 用法: basic_window [--headless] [--frames N] [--imgui-demo] [--editor]
+// 用法: basic_window [--headless] [--frames N] [--imgui-demo] [--editor] [--no-vsync]
 Application* createApplication(int argc, char** argv)
 {
     ApplicationCreateInfo info;
@@ -25,6 +25,7 @@ Application* createApplication(int argc, char** argv)
     bool imgui_demo = false;
     // 开局就进编辑器模式：场景画进 Viewport 面板，backbuffer 归 UI。
     bool editor = false;
+    bool vsync = true;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument{ argv[index] };
         if (argument == "--headless") {
@@ -33,6 +34,8 @@ Application* createApplication(int argc, char** argv)
             imgui_demo = true;
         } else if (argument == "--editor") {
             editor = true;
+        } else if (argument == "--no-vsync") {
+            vsync = false;
         } else if (argument == "--frames" && (index + 1) < argc) {
             const std::string_view value{ argv[++index] };
             uint32_t parsed = 0;
@@ -50,7 +53,7 @@ Application* createApplication(int argc, char** argv)
 
     auto* app = new Application(info);
     app->pushLayer(std::make_unique<sample::BasicWindowLayer>(!headless, frame_limit, imgui_demo,
-            editor));
+            editor, vsync));
     return app;
 }
 

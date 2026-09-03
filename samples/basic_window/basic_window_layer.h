@@ -20,7 +20,7 @@ class ImGuiHost;
 class BasicWindowLayer final : public core::Layer {
 public:
     BasicWindowLayer(bool enable_renderer, uint32_t frame_limit, bool show_imgui_demo = false,
-            bool editor_mode = false);
+            bool editor_mode = false, bool vsync = true);
     ~BasicWindowLayer() override;
 
     void onAttach() override;
@@ -47,6 +47,7 @@ private:
     bool m_show_demo_window{ false };
     bool m_rotate{ true };
     bool m_editor_mode{ false };
+    bool m_vsync{ true };
     glm::vec3 m_clear_color{ 0.05f, 0.07f, 0.10f };
     rendering::FrameStatistics m_last_statistics;
 
