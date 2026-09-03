@@ -263,9 +263,16 @@ void GBufferPass::record(PassRecordContext& context) {
     // 每帧重写而不是建的时候写一次：updateMaterial() 可以改材质参数，重写是最省心的正确做法，
     // 几十个材质的小 buffer 写入可以忽略。
     std::unordered_set<MaterialHandle> written;
-    for (const auto& draw: scene.draws) {
+    for (std::size_t index = 0; index < scene.draws.size(); ++index) {
+        const DrawItem& draw = scene.draws[index];
         const auto resolved = detail::resolveDraw(frame, draw);
         if (!resolved || resolved->material.type != MaterialType::PBR) {
+            continue;
+        }
+        // 被剔掉的 draw 不写常量。**可见性判断必须在 written.insert 之前** —— 反过来的话，
+        // 一个材质的第一个 draw 被剔掉就会把这个材质塞进 written，后面还要画的同材质 draw
+        // 就拿不到常量了。那个 bug 的表现是「某些物体材质参数是上一帧的」，只在相机移动时闪。
+        if (!frame.isVisible(index)) {
             continue;
         }
         if (!written.insert(draw.material).second) {
@@ -276,9 +283,20 @@ void GBufferPass::record(PassRecordContext& context) {
         commands.writeBuffer(entry.constants, &constants, sizeof(constants));
     }
 
-    for (const auto& draw: scene.draws) {
+    for (std::size_t index = 0; index < scene.draws.size(); ++index) {
+        const DrawItem& draw = scene.draws[index];
         const auto resolved = detail::resolveDraw(frame, draw);
         if (!resolved || resolved->material.type != MaterialType::PBR) {
+            continue;
+        }
+        // 剔除计数在这里、只在这里 —— 上面那趟不数，否则一个 draw 会被数两次。
+        //
+        // 顺序是「先 resolve、再判可见」而不是反过来：这样 culled 只统计**本来真会被画的**
+        // draw，于是 draw_calls + culled 恒等于场景里的 PBR submesh 总数，这个守恒式是
+        // 阶段 2 的验收判据。代价是被剔掉的 draw 还是白付一次 resolveDraw（几次哈希查找），
+        // 换一个能对得上账的数字，值。
+        if (!frame.isVisible(index)) {
+            ++frame.statistics().culled;
             continue;
         }
 

@@ -275,15 +275,24 @@ void PickingPass::record(PassRecordContext& context) {
     const auto& scene = context.frame().scene();
     const glm::mat4 view_projection = scene.view.projection * scene.view.view;
 
-    for (const auto& draw: scene.draws) {
+    for (std::size_t index = 0; index < scene.draws.size(); ++index) {
+        const DrawItem& draw = scene.draws[index];
         // picking_id 为 0 的 draw 不参与拾取 —— 那个值是「空处」的保留编号。
         if (draw.picking_id == 0) {
             continue;
         }
         const auto resolved = detail::resolveDraw(context.frame(), draw);
-        // 和 GBufferPass 逐条对齐地跳过：那边不画的东西屏幕上就不存在，这边要是画了，
-        // 点空处会选中一个看不见的实体。加几何 pass（透明、蒙皮）时这个条件要跟着放宽。
+        // 和 GBufferPass 逐条对齐地跳过（**包括视锥可见性**）：那边不画的东西屏幕上就不存在，
+        // 这边要是画了，点空处会选中一个看不见的实体。加几何 pass（透明、蒙皮）时这个条件要
+        // 跟着放宽。
+        //
+        // 可见性读的是 FrameContext 上算好的那一份，不是在这里重新判一次 —— 两边各判一次的话，
+        // 判据只要有一点分歧（比如哪天有人给其中一边加了个保守余量）就会出现「看得见但点不到」，
+        // 而且只在视锥边缘出现。这里不数 culled，那是 G-Buffer 的账，拾取不是每帧都跑。
         if (!resolved || resolved->material.type != MaterialType::PBR) {
+            continue;
+        }
+        if (!context.frame().isVisible(index)) {
             continue;
         }
 
