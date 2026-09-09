@@ -12,5 +12,5 @@ target_link_libraries(basic_window
         ArtiSDK::GLM
 )
 
-artichoco_stage_vulkan_sdk_runtime(basic_window)
+artichoco_stage_libraries(basic_window)
 set_target_properties(basic_window PROPERTIES FOLDER "Samples")

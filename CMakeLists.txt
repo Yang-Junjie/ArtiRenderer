@@ -35,12 +35,12 @@ foreach(_arti_required_submodule
     endif()
 endforeach()
 
-# Include the SDK module here (not only inside ArtiChoco) so that the
-# ArtiSDK::* targets and artichoco_stage_vulkan_sdk_runtime() are visible to
-# every directory of this project. ArtiVulkanSDK.cmake uses include_guard(GLOBAL),
-# so ArtiChoco's own include() call becomes a no-op.
+# Include the dependency module here (not only inside ArtiChoco) so that the
+# ArtiSDK::* targets and artichoco_stage_libraries() are visible to every directory
+# of this project. ArtiDependencies.cmake uses include_guard(GLOBAL), so ArtiChoco's
+# own include() call becomes a no-op.
 list(APPEND CMAKE_MODULE_PATH "${ARTIRENDERER_ARTICHOCO_DIR}/cmake")
-include(ArtiVulkanSDK)
+include(ArtiDependencies)
 
 add_subdirectory(ArtiChoco)
 # third_party 在 ArtiRenderer 之前：imgui_sdl3 要用 ArtiChoco 的 cmake 模块提供的 ArtiSDK::SDL3。

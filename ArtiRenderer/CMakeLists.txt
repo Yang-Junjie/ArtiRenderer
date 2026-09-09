@@ -99,7 +99,7 @@ target_sources(artirenderer PRIVATE ${ARTIRENDERER_SHADERS})
 set_source_files_properties(${ARTIRENDERER_SHADERS} PROPERTIES HEADER_FILE_ONLY TRUE)
 
 # 把内建 shader 拷到 target 旁边的 shaders/。由**消费方 exe** 调用，和
-# artichoco_stage_vulkan_sdk_runtime() 一个形状 —— 每个 exe 自己决定要不要，而不是做成一个
+# artichoco_stage_libraries() 一个形状 —— 每个 exe 自己决定要不要，而不是做成一个
 # 全局 custom target（那会把路径耦合到 CMAKE_RUNTIME_OUTPUT_DIRECTORY 上）。
 #
 # 着色器是运行期编译的，所以 .slang 必须跟着二进制走。shaderPath() 优先用这一份，
